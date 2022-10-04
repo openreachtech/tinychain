@@ -1,0 +1,2 @@
+# tinychain
+学習用のコード量の非常に少ないjavascript製のブロックチェーン
