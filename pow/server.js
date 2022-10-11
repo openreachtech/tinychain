@@ -5,7 +5,7 @@ const { Command } = require("commander");
 const express = require("express");
 const bodyParser = require("body-parser");
 const { ec } = require("elliptic");
-const { Block, TinyChain, Wallet, Transaction } = require("./blockchain");
+const { TinyChain, Wallet, Transaction } = require("./blockchain");
 
 const EC = new ec("secp256k1");
 const program = new Command();

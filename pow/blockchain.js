@@ -29,6 +29,7 @@ class TinyChain {
     this.pool = new TxPool();
     this.wallet = wallet ? wallet : new Wallet();
     this.difficulty = difficulty;
+    this.stopFlg = false;
   }
 
   latestBlock = () => this.blocks[this.blocks.length - 1];
@@ -59,7 +60,7 @@ class TinyChain {
   }
 
   async genNexBlock() {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       let nonce = 0;
       const pre = this.latestBlock();
       const conbaseTx = this._genCoinbaseTx();
@@ -85,7 +86,7 @@ class TinyChain {
   }
 
   async startMining() {
-    while (true) {
+    while (!this.stopFlg) {
       const block = await this.genNexBlock();
       this.addBlock(block);
       console.log(`new block mined! block number is ${block.height}`);
