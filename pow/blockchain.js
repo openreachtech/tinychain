@@ -4,9 +4,13 @@ const SHA256 = require("crypto-js/sha256");
 const { ec } = require("elliptic");
 
 const EC = new ec("secp256k1");
-
 const now = () => Math.floor(new Date().getTime() / 1000);
 const genesisBlock = () => new Block(0, "0", now(), "{}", 0);
+const toHexString = (bytes) => {
+  return Array.from(bytes, (byte) => {
+    return ("0" + (byte & 0xff).toString(16)).slice(-2);
+  }).join("");
+};
 
 class Block {
   constructor(height, preHash, timestamp, data, nonce) {
@@ -27,12 +31,14 @@ class TinyChain {
   constructor(wallet, difficulty = 2) {
     this.blocks = [genesisBlock()];
     this.pool = new TxPool();
-    this.wallet = wallet ? wallet : new Wallet();
+    this.wallet = wallet ? wallet : new Wallet(); // コインベースTxを受け取るウォレット
     this.difficulty = difficulty;
     this.stopFlg = false;
   }
 
-  latestBlock = () => this.blocks[this.blocks.length - 1];
+  latestBlock() {
+    return this.blocks[this.blocks.length - 1];
+  }
 
   addBlock(newBlock) {
     this._validBlock(newBlock);
@@ -49,12 +55,16 @@ class TinyChain {
       block.nonce
     );
     if (preBlock.height + 1 !== block.height) {
+      // 次のブロックかチェック
       throw new Error(`invalid heigh. expected: ${preBlock.height + 1}`);
     } else if (preBlock.hash !== block.preHash) {
+      // 前ブロックのハッシュ値が一致するかチェック
       throw new Error(`invalid preHash. expected: ${preBlock.hash}`);
     } else if (expHash !== block.hash) {
+      // ハッシュ値が正しいかチェック
       throw new Error(`invalid hash. expected: ${expHash}`);
     } else if (!block.hash.startsWith("0".repeat(this.difficulty))) {
+      // difficultyの要件を満たすかチェック
       throw new Error(`invalid hash. expected to start from ${"0".repeat(this.difficulty)}`);
     }
   }
@@ -70,17 +80,20 @@ class TinyChain {
           conbaseTx.toString()
         );
         const block = new Block(pre.height + 1, pre.hash, now(), data, nonce);
-        // if (block.hash.startsWith("00")) {
+        // hash値のhexの先頭に'0'が'difficulty'個以上つけば正規のブロックになる
         if (block.hash.startsWith("0".repeat(this.difficulty))) {
           clearInterval(intervalID);
-          // NOTE: すげてのUtxoがブロックに取り込まれたとし、txpoolを空にする
+          // NOTE: タイミング次第でバグとなりうる危険なコード
+          // 全てのUtxoがブロックに取り込まれたとしtxpoolを空にする
           const spentTxs = this.pool.txs;
           this.pool.txs = [];
           this.pool.updateUnspentTxs(spentTxs);
           this.pool.unspentTxs.push(conbaseTx);
           resolve(block);
         }
-        nonce++;
+        nonce++; // nonceをインクリメントすることで、hash値に変化をつける
+        // difficulty=2の場合、先頭にゼロが２つ揃う確率は、1/256
+        // 1秒に32回試行するなら、256/32=8秒に一回だけブロックを生成する
       }, 1000 / 32);
     });
   }
@@ -93,7 +106,11 @@ class TinyChain {
     }
   }
 
-  _genCoinbaseTx = () => this.wallet.signTx(new Transaction("", this.wallet.pubKey));
+  _genCoinbaseTx() {
+    // minerへの報酬として支払われるコインベーストランザクション
+    // inputがなくて、outputがminerのウォレット
+    return this.wallet.signTx(new Transaction("", this.wallet.pubKey));
+  }
 }
 
 class Transaction {
@@ -104,15 +121,18 @@ class Transaction {
     this.hash = Transaction.hash(inHash, outAddr);
   }
 
-  toString = () => JSON.stringify(this);
+  toString() {
+    return JSON.stringify(this);
+  }
 
-  static hash = (inHash, outAddr) => SHA256(`${inHash},${outAddr}`).toString();
+  static hash(inHash, outAddr) {
+    return SHA256(`${inHash},${outAddr}`).toString();
+  }
 }
 
 class Wallet {
   constructor(key) {
     this.key = key ? key : EC.genKeyPair();
-    this.priKey = this.key.getPrivate();
     this.pubKey = this.key.getPublic().encode("hex");
   }
 
@@ -134,31 +154,33 @@ class TxPool {
   }
 
   balanceOf(address) {
-    return this.unspentTxs.reduce((pre, tx) => {
-      return tx.outAddr === address ? pre + 1 : pre;
-    }, 0);
+    return this.unspentTxs.filter((tx) => tx.outAddr === address).length;
   }
 
   updateUnspentTxs(spentTxs) {
-    const newUnspents = [...spentTxs];
-    this.unspentTxs = this.unspentTxs.filter((unspentTx) => {
-      for (let i = 0; i < spentTxs.length; i++) {
-        if (spentTxs[i].inHash == unspentTx.hash) {
-          spentTxs.splice(i, 1);
-          return false;
+    spentTxs
+      .map((tx) => tx.inHash)
+      .forEach((spentHash) => {
+        // Txが消費されたかチェック
+        const index = this.unspentTxs.findIndex((unspentTx) => unspentTx.hash === spentHash);
+        if (index === -1) {
+          return;
         }
-      }
-      return true;
-    });
-    this.unspentTxs.push(...newUnspents);
+        // 未消費リストから消し込み
+        this.unspentTxs.splice(index, 1);
+      });
+    this.unspentTxs.push(...spentTxs); // spentTxのoutAddrが、新たな未消費分となる
   }
 
   static validateTx(unspentTxs, tx) {
+    // hash値が正しいかチェック
     if (tx.hash !== Transaction.hash(tx.inHash, tx.outAddr)) {
       throw new Error(`invalid tx hash. expected: ${Transaction.hash(tx.inHash, tx.outAddr)}`);
     }
+    // 未消費かチェック
     const inTx = unspentTxs.find((unspentTx) => unspentTx.hash === tx.inHash);
     if (!inTx) throw new Error(`tx in not found`);
+    // 署名が正しいかチェック
     if (!TxPool.validateSig(tx, inTx.outAddr)) {
       throw new Error(`invalid signature`);
     }
@@ -170,15 +192,4 @@ class TxPool {
   }
 }
 
-const toHexString = (bytes) => {
-  return Array.from(bytes, (byte) => {
-    return ("0" + (byte & 0xff).toString(16)).slice(-2);
-  }).join("");
-};
-
-module.exports = {
-  Block,
-  TinyChain,
-  Transaction,
-  Wallet,
-};
+module.exports = { Block, TinyChain, Transaction, Wallet };
