@@ -19,9 +19,7 @@ class Block {
   }
 
   static hash(height, preHash, timestamp, data, nonce) {
-    return SHA256(
-      `${height},${preHash},${timestamp},${data},${nonce}`
-    ).toString();
+    return SHA256(`${height},${preHash},${timestamp},${data},${nonce}`).toString();
   }
 }
 
@@ -56,9 +54,7 @@ class TinyChain {
     } else if (expHash !== block.hash) {
       throw new Error(`invalid hash. expected: ${expHash}`);
     } else if (!block.hash.startsWith("0".repeat(this.difficulty))) {
-      throw new Error(
-        `invalid hash. expected to start from ${"0".repeat(this.difficulty)}`
-      );
+      throw new Error(`invalid hash. expected to start from ${"0".repeat(this.difficulty)}`);
     }
   }
 
@@ -96,8 +92,7 @@ class TinyChain {
     }
   }
 
-  _genCoinbaseTx = () =>
-    this.wallet.signTx(new Transaction("", this.wallet.pubKey));
+  _genCoinbaseTx = () => this.wallet.signTx(new Transaction("", this.wallet.pubKey));
 }
 
 class Transaction {
@@ -159,9 +154,7 @@ class TxPool {
 
   static validateTx(unspentTxs, tx) {
     if (tx.hash !== Transaction.hash(tx.inHash, tx.outAddr)) {
-      throw new Error(
-        `invalid tx hash. expected: ${Transaction.hash(tx.inHash, tx.outAddr)}`
-      );
+      throw new Error(`invalid tx hash. expected: ${Transaction.hash(tx.inHash, tx.outAddr)}`);
     }
     const inTx = unspentTxs.find((unspentTx) => unspentTx.hash === tx.inHash);
     if (!inTx) throw new Error(`tx in not found`);

@@ -18,10 +18,7 @@ program
   .action(async (subCmd, options) => {
     const wallet = new Wallet();
     console.log(`wallet address is ${wallet.pubKey}`);
-    writeFileSync(
-      `${options.dir}/privkey-${subCmd}`,
-      wallet.priKey.toString(16)
-    );
+    writeFileSync(`${options.dir}/privkey-${subCmd}`, wallet.priKey.toString(16));
   });
 
 program

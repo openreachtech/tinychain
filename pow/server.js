@@ -17,10 +17,7 @@ program
   .option("-d, --difficulty <number>", "the difficulty of chain", 2)
   .description("create new wallet")
   .action(async (options) => {
-    const blockchain = new TinyChain(
-      readWallet(options.wallet),
-      options.difficulty
-    );
+    const blockchain = new TinyChain(readWallet(options.wallet), options.difficulty);
 
     startServer(3000, blockchain);
 
