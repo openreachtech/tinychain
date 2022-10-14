@@ -5,11 +5,11 @@ const { Command } = require("commander");
 const express = require("express");
 const bodyParser = require("body-parser");
 const { ec } = require("elliptic");
-const { TinyChain, Wallet, Transaction } = require("./blockchain");
+const { Tinycoin, Wallet, Transaction } = require("./blockchain");
 
 const EC = new ec("secp256k1");
 const program = new Command();
-program.name("TinyNode").description("node for tinychain").version("1.0.0");
+program.name("TinyNode").description("node for tinycoin").version("1.0.0");
 
 program
   .command("chain")
@@ -17,7 +17,7 @@ program
   .option("-d, --difficulty <number>", "the difficulty of chain", 2)
   .description("create new wallet")
   .action(async (options) => {
-    const blockchain = new TinyChain(readWallet(options.wallet), options.difficulty);
+    const blockchain = new Tinycoin(readWallet(options.wallet), options.difficulty);
 
     startServer(3000, blockchain);
 

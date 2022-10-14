@@ -12,22 +12,7 @@ const toHexString = (bytes) => {
   }).join("");
 };
 
-class Block {
-  constructor(height, preHash, timestamp, data, nonce) {
-    this.height = height;
-    this.preHash = preHash;
-    this.timestamp = timestamp;
-    this.data = data;
-    this.nonce = nonce;
-    this.hash = Block.hash(height, preHash, timestamp, data, nonce);
-  }
-
-  static hash(height, preHash, timestamp, data, nonce) {
-    return SHA256(`${height},${preHash},${timestamp},${data},${nonce}`).toString();
-  }
-}
-
-class TinyChain {
+class Tinycoin {
   constructor(wallet, difficulty = 2) {
     this.blocks = [genesisBlock()];
     this.pool = new TxPool();
@@ -55,13 +40,13 @@ class TinyChain {
       block.nonce
     );
     if (preBlock.height + 1 !== block.height) {
-      // 次のブロックかチェック
+      // ブロック高さが直前のブロックの次であるかチェック
       throw new Error(`invalid heigh. expected: ${preBlock.height + 1}`);
     } else if (preBlock.hash !== block.preHash) {
-      // 前ブロックのハッシュ値が一致するかチェック
+      // 前ブロックハッシュ値が直前のブロックのハッシュ値と一致するかチェック
       throw new Error(`invalid preHash. expected: ${preBlock.hash}`);
     } else if (expHash !== block.hash) {
-      // ハッシュ値が正しいかチェック
+      // ハッシュ値が正しいく計算されているかチェック
       throw new Error(`invalid hash. expected: ${expHash}`);
     } else if (!block.hash.startsWith("0".repeat(this.difficulty))) {
       // difficultyの要件を満たすかチェック
@@ -113,6 +98,21 @@ class TinyChain {
   }
 }
 
+class Block {
+  constructor(height, preHash, timestamp, data, nonce) {
+    this.height = height;
+    this.preHash = preHash;
+    this.timestamp = timestamp;
+    this.data = data;
+    this.nonce = nonce;
+    this.hash = Block.hash(height, preHash, timestamp, data, nonce);
+  }
+
+  static hash(height, preHash, timestamp, data, nonce) {
+    return SHA256(`${height},${preHash},${timestamp},${data},${nonce}`).toString();
+  }
+}
+
 class Transaction {
   constructor(inHash, outAddr, sig = "") {
     this.inHash = inHash;
@@ -127,18 +127,6 @@ class Transaction {
 
   static hash(inHash, outAddr) {
     return SHA256(`${inHash},${outAddr}`).toString();
-  }
-}
-
-class Wallet {
-  constructor(key) {
-    this.key = key ? key : EC.genKeyPair();
-    this.pubKey = this.key.getPublic().encode("hex");
-  }
-
-  signTx(tx) {
-    tx.inSig = toHexString(this.key.sign(tx.hash).toDER());
-    return tx;
   }
 }
 
@@ -173,14 +161,14 @@ class TxPool {
   }
 
   static validateTx(unspentTxs, tx) {
-    // hash値が正しいかチェック
+    // hash値が正しく計算されているかチェック
     if (tx.hash !== Transaction.hash(tx.inHash, tx.outAddr)) {
       throw new Error(`invalid tx hash. expected: ${Transaction.hash(tx.inHash, tx.outAddr)}`);
     }
-    // 未消費かチェック
+    // 消費済みトランザクションではないか（未消費のトランザクションであること確認）チェック
     const inTx = unspentTxs.find((unspentTx) => unspentTx.hash === tx.inHash);
     if (!inTx) throw new Error(`tx in not found`);
-    // 署名が正しいかチェック
+    // 署名が正当かどうかチェック
     if (!TxPool.validateSig(tx, inTx.outAddr)) {
       throw new Error(`invalid signature`);
     }
@@ -192,4 +180,16 @@ class TxPool {
   }
 }
 
-module.exports = { Block, TinyChain, Transaction, Wallet };
+class Wallet {
+  constructor(key) {
+    this.key = key ? key : EC.genKeyPair(); // 秘密鍵の生成
+    this.pubKey = this.key.getPublic().encode("hex"); // この公開鍵をアドレスとして使う
+  }
+  // トランザクションに署名する関数
+  signTx(tx) {
+    tx.inSig = toHexString(this.key.sign(tx.hash).toDER());
+    return tx;
+  }
+}
+
+module.exports = { Block, Tinycoin, Transaction, Wallet };
