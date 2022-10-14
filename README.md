@@ -16,7 +16,7 @@
 - [Bitcoin の仕組み](https://docs.google.com/presentation/d/1G_xnpX7Tprpjh76WIyTt3M8HuDWOYcBD3MRlmz1TTwE/edit#slide=id.p)
 
 また、こちらのブログを多分に参考にしています。のぞいてみてください。
-[A blockchain in 200 lines of code](https://medium.com/@lhartikk/a-blockchain-in-200-lines-of-code-963cc1cc0e54#.dttbm9afr5)
+- [A blockchain in 200 lines of code](https://medium.com/@lhartikk/a-blockchain-in-200-lines-of-code-963cc1cc0e54#.dttbm9afr5)
 
 ## 構成
 
