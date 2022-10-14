@@ -183,6 +183,7 @@ class TxPool {
 class Wallet {
   constructor(key) {
     this.key = key ? key : EC.genKeyPair(); // 秘密鍵の生成
+    this.priKey = this.key.getPrivate();
     this.pubKey = this.key.getPublic().encode("hex"); // この公開鍵をアドレスとして使う
   }
   // トランザクションに署名する関数
