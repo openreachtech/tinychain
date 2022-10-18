@@ -32,13 +32,7 @@ class Tinycoin {
 
   _validBlock(block) {
     const preBlock = this.latestBlock();
-    const expHash = Block.hash(
-      block.height,
-      block.preHash,
-      block.timestamp,
-      block.data,
-      block.nonce
-    );
+    const expHash = Block.hash(block.height, block.preHash, block.timestamp, block.data, block.nonce);
     if (preBlock.height + 1 !== block.height) {
       // ブロック高さが直前のブロックの次であるかチェック
       throw new Error(`invalid heigh. expected: ${preBlock.height + 1}`);
@@ -60,10 +54,7 @@ class Tinycoin {
       const pre = this.latestBlock();
       const conbaseTx = this._genCoinbaseTx();
       const intervalID = setInterval(() => {
-        const data = this.pool.txs.reduce(
-          (pre, tx) => pre + tx.toString(),
-          conbaseTx.toString()
-        );
+        const data = this.pool.txs.reduce((pre, tx) => pre + tx.toString(), conbaseTx.toString());
         const block = new Block(pre.height + 1, pre.hash, now(), data, nonce);
         // hash値のhexの先頭に'0'が'difficulty'個以上つけば正規のブロックになる
         if (block.hash.startsWith("0".repeat(this.difficulty))) {
