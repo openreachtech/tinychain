@@ -24,8 +24,9 @@ program
   .command("balance")
   .description("show balance of specific address")
   .argument("<address>", "wallet address")
-  .action(async (subCmd) => {
-    const result = await axios.get(`http://localhost:3000/balance/${subCmd}`);
+  .option("-p, --port <number>", "the port json endpoint", 3001)
+  .action(async (subCmd, options) => {
+    const result = await axios.get(`http://localhost:${options.port}/balance/${subCmd}`);
     console.log(result.data);
   });
 

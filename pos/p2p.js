@@ -83,8 +83,7 @@ class P2P {
             console.log(`succeed adding vote ${vote.hash}`);
             self.sockets.forEach((s) => s.send(data)); // 接続しているペアにブロードキャスト
             if (!self.chain.isProposer()) break; // プロポーザかチェック
-            if (self.chain.votes.legth !== self.chain.store.validators().length - 1) break; // 投票率が100%かチェック
-
+            if (self.chain.votes.length !== self.chain.store.validators().length - 1) break; // 投票率が100%かチェック
             if (!self.chain.tallyVotes(self.chain.votes)) {
               // 2/3以上の賛同を得られなければ、ブロックを作り直す
               self.chain.proposeBlock = null;
@@ -93,8 +92,11 @@ class P2P {
             }
 
             // 2/3以上の賛同を得られれば、得票したらブロックにsignしてブロードキャスト
-            self.chain.pendingBlock.vote = self.chain.votes;
-            const newBlock = self.wallet.signBlock(self.chain.pendingBlock);
+            console.log(`proposed block was accepted!`);
+            let b = self.chain.pendingBlock;
+            const newBlock = self.wallet.signBlock(
+              new Block(b.height, b.preHash, b.timestamp, b.txs, b.proposer, b.stateRoot, self.chain.votes)
+            );
             self.chain.addBlock(newBlock);
             self.sockets.forEach((s) =>
               s.send(
@@ -104,6 +106,7 @@ class P2P {
                   preHash: newBlock.preHash,
                   timestamp: newBlock.timestamp,
                   txs: newBlock.txs,
+                  proposer: newBlock.proposer,
                   stateRoot: newBlock.stateRoot,
                   votes: newBlock.votes,
                   signature: newBlock.signature,
@@ -117,14 +120,16 @@ class P2P {
           break;
         case PacketTypes.Block:
           try {
+            const votes = packet.votes.map((v) => new Vote(v.height, v.blockHash, v.voter, v.isYes, v.signature));
+            const txs = packet.txs.map((t) => new Transaction(t.from, t.to, t.amount, t.signature));
             const b = new Block(
               packet.height,
               packet.preHash,
               packet.timestamp,
-              packet.txs,
+              txs,
               packet.proposer,
               packet.stateRoot,
-              packet.votes,
+              votes,
               packet.signature
             );
             const isNew = self.chain.addBlock(b);
@@ -137,28 +142,17 @@ class P2P {
           }
           break;
         case PacketTypes.PBlock: {
-          const b = new Block(
-            packet.height,
-            packet.preHash,
-            packet.timestamp,
-            packet.txs,
-            packet.proposer,
-            packet.stateRoot
-          );
+          const txs = packet.txs.map((t) => new Transaction(t.from, t.to, t.amount, t.signature));
+          const b = new Block(packet.height, packet.preHash, packet.timestamp, txs, packet.proposer, packet.stateRoot);
 
           if (self.chain.isProposer()) break; // プロポーザーならスキップ
 
-          console.log(`received ${b.height}th height of proposed block`, b);
-
           // 既に同じブロックに投票済みならスキップ
-          if (
-            0 <
-            self.chain.votes.indexOf(
-              (v) => v.height === b.height && v.blockHash === b.hash && v.voter === self.wallet.pubKey
-            )
-          ) {
+          if (self.chain.votes.find((v) => v.blockHash === b.hash && v.voter === self.wallet.pubKey)) {
             break;
           }
+
+          console.log(`received ${b.height} th height of proposed block`);
 
           // プロポーズされたブロックをブロードキャスト
           self.sockets.forEach((s) => s.send(data));

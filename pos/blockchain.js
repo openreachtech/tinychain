@@ -33,8 +33,8 @@ class Tinychain {
     this.validateBlock(newBlock);
     this.blocks.push(newBlock);
     this.store.applyTransactions(newBlock.txs); // stateの更新
-    this.store.applyRewards(newBlock.propoer, newBlock.votes); // リワードの付与
-    console.log(`${newBlock.heigh}th height of block added!`);
+    this.store.applyRewards(newBlock.proposer, newBlock.votes); // リワードの付与
+    this.initRound(); // クリア
     return true;
   }
 
@@ -63,7 +63,7 @@ class Tinychain {
 
   electProposer(validators, height) {
     // ブロック高さのハッシュ値の先頭１byteを決定的な乱数として使う
-    const threshold = Number(`0x${SHA256(height).toString().slice(0, 2)}`);
+    const threshold = Number(`0x${SHA256(height.toString()).toString().slice(0, 2)}`);
     const totalStake = validators.reduce((pre, v) => pre + v.stake, 0);
     let sumOfVotingPower = 0;
     return validators.find((v) => {
@@ -95,6 +95,8 @@ class Tinychain {
   }
 
   addVote(vote) {
+    let isNew = this.latestBlock().height < vote.height ? true : false;
+    if (!isNew) return false; // 新規のブロックに対してではない場合は、スキップ
     this.validateVote(vote);
     if (this.votes.find((v) => v.hash === vote.hash)) return false; // 既に存在する場合はスキップ
     this.votes.push(vote);
@@ -120,14 +122,14 @@ class Tinychain {
       throw new Error(`voter should be validator`);
     }
     // 当該プロックのプロポーザではないことをチェック
-    if (vote.voter === this.electProposer(this.store.validators(), this.height + 1)) {
+    if (vote.voter === this.electProposer(this.store.validators(), this.latestBlock().height + 1)) {
       throw new Error(`voter is proposer`);
     }
   }
 
   tallyVotes(votes) {
     // yes投票の割合
-    const rate = votes.filter((v) => v.isYes).length / (this.state.validators() - 1);
+    const rate = votes.filter((v) => v.isYes).length / (this.store.validators().length - 1);
     // yesが2/3以上であれば合格
     return 2 / 3 <= rate;
   }
@@ -152,8 +154,8 @@ class Tinychain {
       // 自分がproposerならブロックを作ってブロードキャスト
       this.pendingBlock = this.generateBlock();
       broadcastBlock(this.pendingBlock);
-      console.log(`proposing ${this.pendingBlock.height}th height of block`, this.pendingBlock);
-    }, 3 * 1000);
+      console.log(`proposing ${this.pendingBlock.height} th height of block`);
+    }, 10 * 1000);
   }
 }
 
@@ -167,7 +169,7 @@ class Block {
     this.stateRoot = stateRoot;
     this.votes = votes;
     this.signature = sig;
-    this.hash = Block.hash(height, preHash, timestamp, txs, proposer, stateRoot, votes, sig);
+    this.hash = Block.hash(height, preHash, timestamp, txs, proposer, stateRoot, votes);
   }
 
   static hash(height, preHash, timestamp, txs, proposer, stateRoot, votes) {
@@ -187,7 +189,7 @@ class StateStore {
   }
 
   balanceOf(addr) {
-    return this.states.find((state) => 0 < state.key === addr).balance;
+    return this.states.find((state) => state.key === addr).balance;
   }
 
   validators() {
