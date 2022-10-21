@@ -1,12 +1,11 @@
 "use strict";
 
-const { writeFileSync, readFileSync } = require("fs");
+const { writeFileSync } = require("fs");
 const { Command } = require("commander");
 const axios = require("axios");
-const { ec } = require("elliptic");
 const { Transaction, Wallet } = require("./blockchain");
+const { readWallet } = require("./utils");
 
-const EC = new ec("secp256k1");
 const program = new Command();
 program.name("TinyWallet").description("wallet for tinychain").version("1.0.0");
 
@@ -35,15 +34,11 @@ program
   .description("transfer coin to somebody")
   .argument("<address>", "recipient wallet address")
   .requiredOption("-w, --wallet <string>", "the location of private key")
+  .requiredOption("-a, --amount <number>", "the amount of coin to send")
   .action(async (subCmd, options) => {
     const wallet = readWallet(options.wallet);
-    let result = await axios.get(`http://localhost:3000/unspentTxs`);
-    const unspentTx = result.data.find((tx) => tx.outAddr === wallet.pubKey);
-    if (!unspentTx) {
-      throw `no available unspent transaction`;
-    }
-    const tx = wallet.signTx(new Transaction(unspentTx.hash, subCmd));
-    result = await axios.post(`http://localhost:3000/sendTransaction`, tx);
+    const tx = wallet.signTx(new Transaction(wallet.pubKey, subCmd, options.amount));
+    const result = await axios.post(`http://localhost:3000/sendTransaction`, tx);
     console.log(result.data);
   });
 
@@ -53,9 +48,3 @@ process.on("unhandledRejection", (err) => {
   console.log(err);
   process.exit(1);
 });
-
-function readWallet(location) {
-  const buffer = readFileSync(location, "utf8");
-  const key = EC.keyFromPrivate(buffer.toString(), "hex");
-  return new Wallet(key);
-}

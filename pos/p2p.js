@@ -80,6 +80,24 @@ class P2P {
             if (!isNew) break;
             console.log(`succeed adding vote ${vote.hash}`);
             self.sockets.forEach((s) => s.send(data)); // 接続しているペアにブロードキャスト
+            if (!this.chain.isProposer()) break;
+            // proposerならブロックにsignしてブロードキャスト
+            this.chain.pendingBlock.vote = this.chain.votes;
+            const proposeBlock = this.wallet.signBlock(this.chain.pendingBlock);
+            self.sockets.forEach((s) =>
+              s.send(
+                JSON.stringify({
+                  type: PacketTypes.Block,
+                  height: proposeBlock.height,
+                  preHash: proposeBlock.preHash,
+                  timestamp: proposeBlock.timestamp,
+                  txs: proposeBlock.txs,
+                  stateRoot: proposeBlock.stateRoot,
+                  votes: proposeBlock.votes,
+                  signature: proposeBlock.signature,
+                })
+              )
+            );
           } catch (e) {
             console.error(e);
             break;
@@ -95,7 +113,7 @@ class P2P {
               packet.proposer,
               packet.stateRoot,
               packet.votes,
-              packet.sig
+              packet.signature
             );
             const isNew = self.chain.addBlock(b);
             if (!isNew) break;
@@ -144,7 +162,7 @@ class P2P {
           self.sockets.forEach((s) =>
             s.send(
               JSON.stringify({
-                type: PacketTypes.Block,
+                type: PacketTypes.Vote,
                 voter: v.voter,
                 isYes: v.isYes,
                 signature: v.signature,
@@ -162,6 +180,25 @@ class P2P {
   }
 }
 
+const generateBroadcastBlockFunc = (p2p) =>
+  function (block) {
+    p2p.sockets.forEach((s) =>
+      s.send(
+        JSON.stringify({
+          type: PacketTypes.Block,
+          height: block.height,
+          preHash: block.preHash,
+          timestamp: block.timestamp,
+          txs: block.txs,
+          proposer: block.proposer,
+          stateRoot: block.stateRoot,
+          votes: block.votes,
+          signature: block.signature,
+        })
+      )
+    );
+  };
+
 function main() {
   if (process.argv.length === 2) {
     const p2p = new P2P();
@@ -174,4 +211,4 @@ function main() {
 
 main();
 
-module.exports = { P2P };
+module.exports = { P2P, generateBroadcastBlockFunc };

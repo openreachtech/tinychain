@@ -2,23 +2,18 @@
 
 const SHA256 = require("crypto-js/sha256");
 const { ec } = require("elliptic");
-
 const EC = new ec("secp256k1");
-const now = () => Math.floor(new Date().getTime() / 1000);
-const toHexString = (bytes) => {
-  return Array.from(bytes, (byte) => {
-    return ("0" + (byte & 0xff).toString(16)).slice(-2);
-  }).join("");
-};
+const { now, toHexString } = require("./utils");
 
 class Tinychain {
   constructor(wallet, genesisStates) {
     this.wallet = wallet ? wallet : new Wallet(); // コインベースTxを受け取るウォレット
-    this.pool = new TxPool();
     this.store = new StateStore(genesisStates);
-    const stateRoot = Block.computeStateRoot(genesisStates);
-    this.blocks = [new Block(0, "", now(), "", stateRoot, this.store.validators())];
+    this.pool = new TxPool(this.store.states);
+    const stateRoot = StateStore.computeStateRoot(this.store.states);
+    this.blocks = [new Block(0, "", now(), [], stateRoot, this.store.validators())];
     this.votes = [];
+    this.pendingBlock = null;
     this.stopFlg = false;
   }
 
@@ -26,13 +21,19 @@ class Tinychain {
     return this.blocks[this.blocks.length - 1];
   }
 
+  initRound() {
+    this.pool.clear(this.store.states); // トランザクションpool内のTxsをクリア & ペンディングStateをstoreのstateと同期
+    this.votes = [];
+    this.pendingBlock = null;
+  }
+
   addBlock(newBlock) {
     let isNew = this.latestBlock().height < newBlock.heigh ? true : false;
     if (!isNew) return false; // 新規のブロックでない場合はスキップ
     this.validateBlock(newBlock);
-    this.store.applyTransactions(newBlock.txs); // stateの更新
-    this.store.applyRewards(newBlock.propoer, newBlock.votes); // rewardの付与
     this.blocks.push(newBlock);
+    this.store.applyTransactions(newBlock.txs); // stateの更新
+    this.store.applyRewards(newBlock.propoer, newBlock.votes); // リワードの付与
     return true;
   }
 
@@ -40,7 +41,7 @@ class Tinychain {
     const preBlock = this.latestBlock();
     const expectedData = TxPool.toData(this.pool.txs);
     const expectedProposer = this.electProposer(this.store.validators(), b.heigh);
-    const expectedStateRoot = Block.computeStateRoot(this.pool.pendingStates);
+    const expectedStateRoot = StateStore.computeStateRoot(this.pool.pendingStates);
     if (b.height !== preBlock.height + 1) {
       // ブロック高さが直前のブロックの次であるかチェック
       throw new Error(`invalid heigh. expected: ${preBlock.height + 1}`);
@@ -139,22 +140,24 @@ class Tinychain {
   generateBlock() {
     const preBlock = this.latestBlock();
     const propoer = this.wallet.pubKey;
-    const stateRoot = Block.computeStateRoot(this.pool.pendingStates);
+    const stateRoot = StateStore.computeStateRoot(this.pool.pendingStates);
     return new Block(preBlock.height + 1, preBlock.hash, this.pool.txs, propoer, stateRoot, this.state.validators());
   }
 
-  async start() {
-    while (!this.stopFlg) {
-      const block = await this.genNexBlock();
-      this.addBlock(block);
-      console.log(`new block mined! block number is ${block.height}`);
-    }
+  isProposer() {
+    const validators = this.store.validators();
+    const nextHeight = this.latestBlock().height + 1;
+    return this.wallet.pubKey !== this.electProposer(validators, nextHeight);
   }
 
-  _genCoinbaseTx() {
-    // minerへの報酬として支払われるコインベーストランザクション
-    // inputがなくて、outputがminerのウォレット
-    return this.wallet.signTx(new Transaction("", this.wallet.pubKey));
+  start(broadcastBlock) {
+    setInterval(() => {
+      // 自分がproposerでなければスキップ
+      if (!this.isProposer()) return;
+      // 自分がproposerならブロックを作ってブロードキャスト
+      this.pendingBlock = this.generateBlock();
+      broadcastBlock(this.pendingBlock);
+    }, 10 * 1000);
   }
 }
 
@@ -169,11 +172,6 @@ class Block {
     this.votes = votes;
     this.signature = sig;
     this.hash = Block.hash(height, preHash, timestamp, txs, proposer, stateRoot, votes, sig);
-  }
-
-  static computeStateRoot(states) {
-    const serialized = states.reduce((pre, state) => pre + state.toString(), "");
-    return SHA256(serialized).toString();
   }
 
   static hash(height, preHash, timestamp, txs, proposer, stateRoot, votes) {
@@ -230,9 +228,9 @@ class StateStore {
     return states;
   }
 
-  computeStateRoot() {
+  static computeStateRoot(states) {
     // StateRootは「全statesを文字列にして繋げたもののhash値」とする
-    return SHA256(this.states.reduce((pre, state) => pre + state.toString(), "")).toString();
+    return SHA256(states.reduce((pre, state) => pre + state.toString(), "")).toString();
   }
 }
 
@@ -282,20 +280,25 @@ class Transaction {
 }
 
 class TxPool {
-  constructor() {
+  constructor(states) {
     this.txs = [];
-    this.pendingStates = [];
+    this.pendingStates = states;
+  }
+
+  clear(states) {
+    this.txs = [];
+    this.pendingStates = states;
   }
 
   addTx(tx) {
-    TxPool.validateTx(tx);
+    TxPool.validateTx(tx, this.pool.pendingStates);
     if (0 < this.txs.indexOf((t) => t.hash === tx.hash)) return false; // 新規のTxではない
     this.pendingStates = StateStore.applyTransaction(this.pendingStates, tx);
     this.txs.push(tx);
     return true;
   }
 
-  static validateTx(tx) {
+  static validateTx(tx, states) {
     // hash値が正しく計算されているかチェック
     if (tx.hash !== Transaction.hash(tx.from, tx.to, tx.amount)) {
       throw new Error(`invalid tx hash. expected: ${Transaction.hash(tx.from, tx.to, tx.amount)}`);
@@ -303,6 +306,11 @@ class TxPool {
     // 署名が正当かどうかチェック
     if (!Transaction.validateSig(tx, tx.to)) {
       throw new Error(`invalid signature`);
+    }
+    // 送金額が残高以下であるかチェック
+    const balance = states.find((s) => s.key === tx.from).balance;
+    if (balance < tx.amount) {
+      throw new Error(`insufficient fund(=${balance})`);
     }
   }
 

@@ -1,31 +1,33 @@
 "use strict";
 
-const { readFileSync } = require("fs");
 const { Command } = require("commander");
 const express = require("express");
 const bodyParser = require("body-parser");
-const { ec } = require("elliptic");
-const { Tinycoin, Wallet, Transaction } = require("./blockchain");
 
-const EC = new ec("secp256k1");
+const { Tinychain, Transaction } = require("./blockchain");
+const gensisStates = require("./genesisStates");
+const { readWallet } = require("./utils");
+const { P2P, generateBroadcastBlockFunc } = require("./p2p");
+
 const program = new Command();
 program.name("TinyNode").description("node for tinycoin").version("1.0.0");
 
 program
   .command("chain")
   .requiredOption("-w, --wallet <string>", "the location of private key")
-  .option("-d, --difficulty <number>", "the difficulty of chain", 2)
-  .description("create new wallet")
+  .requiredOption("-p, --port <number>", "the port json endpoint")
+  .requiredOption("--p2p-port <number>", "the p2p port of chain")
+  .option("--p2p-endpoints <items>", "the p2p connecting pairs list")
+  .description("run tinychain server")
   .action(async (options) => {
-    const blockchain = new Tinycoin(readWallet(options.wallet), options.difficulty);
+    const wallet = readWallet(options.wallet);
+    const blockchain = new Tinychain(wallet, gensisStates);
+    const endpoints = options.p2pEndpoints ? options.p2pEndpoints.split(",") : [];
+    const p2p = new P2P(options.p2pPort, endpoints, blockchain, wallet);
 
-    startServer(3000, blockchain);
+    startServer(options.port, blockchain);
 
-    try {
-      await blockchain.startMining();
-    } catch (e) {
-      console.error(`error happen while mining: err: ${e.message}`);
-    }
+    blockchain.start(generateBroadcastBlockFunc(p2p));
   });
 
 program.parse();
@@ -34,12 +36,6 @@ process.on("unhandledRejection", (err) => {
   console.log(err);
   process.exit(1);
 });
-
-function readWallet(location) {
-  const buffer = readFileSync(location, "utf8");
-  const key = EC.keyFromPrivate(buffer.toString(), "hex");
-  return new Wallet(key);
-}
 
 function startServer(port, blockchain) {
   const app = express();
@@ -50,16 +46,17 @@ function startServer(port, blockchain) {
   });
 
   app.get("/balance/:address", (req, res) => {
-    res.send({ balance: blockchain.pool.balanceOf(req.params.address) });
-  });
-
-  app.get("/unspentTxs", (req, res) => {
-    res.send(blockchain.pool.unspentTxs);
+    res.send({ balance: blockchain.store.balanceOf(req.params.address) });
   });
 
   app.post("/sendTransaction", (req, res) => {
-    const { inHash, outAddr, inSig } = req.body;
-    blockchain.pool.addTx(new Transaction(inHash, outAddr, inSig));
+    const { from, to, amount, signature } = req.body;
+    try {
+      blockchain.pool.addTx(new Transaction(from, to, amount, signature));
+    } catch (e) {
+      res.send({ msg: `fail. err: ${e.message}` });
+      return;
+    }
     res.send({ msg: "success" });
   });
 
