@@ -9,7 +9,7 @@ class Tinychain {
   constructor(wallet, genesisStates) {
     this.wallet = wallet ? wallet : new Wallet(); // コインベースTxを受け取るウォレット
     this.store = new StateStore(genesisStates);
-    this.pool = new TxPool(this.store.states);
+    this.pool = new TxPool(genesisStates);
     const stateRoot = StateStore.computeStateRoot(this.store.states);
     this.blocks = [new Block(0, "", 0, [], "", stateRoot, [])];
     this.votes = [];
@@ -155,7 +155,7 @@ class Tinychain {
       this.pendingBlock = this.generateBlock();
       broadcastBlock(this.pendingBlock);
       console.log(`proposing ${this.pendingBlock.height} th height of block`);
-    }, 10 * 1000);
+    }, 5 * 1000);
   }
 }
 
@@ -189,7 +189,8 @@ class StateStore {
   }
 
   balanceOf(addr) {
-    return this.states.find((state) => state.key === addr).balance;
+    const state = this.states.find((state) => state.key === addr)
+    return state ? state.balance : 0;
   }
 
   validators() {
@@ -197,7 +198,7 @@ class StateStore {
   }
 
   applyTransactions(txs) {
-    txs.forEach((tx) => (this.states = StateStore.applyTransaction(this.states, tx)));
+    txs.forEach(tx => this.states = StateStore.applyTransaction(this.states, tx));
   }
 
   applyRewards(propoer, votes) {
@@ -216,6 +217,7 @@ class StateStore {
     // fromのバランスを更新
     const fromIndex = states.findIndex((state) => state.key === tx.from);
     if (fromIndex < 0) throw new Error(`no state found by key(=${tx.from})`);
+    states[fromIndex].updateBalance(-tx.amount)
     // toのバランスを更新
     const toIndex = states.findIndex((state) => state.key === tx.to);
     if (toIndex < 0) {
@@ -237,21 +239,15 @@ class State {
     this.key = addr;
     this.balance = amount;
     this.stake = stake;
-    this.hash = this.hash();
   }
 
   toString() {
     return JSON.stringify(this);
   }
 
-  hash() {
-    return SHA256(`${this.key},${this.balance},${this.stake}`).toString();
-  }
-
   updateBalance(amount) {
-    this.balance = +amount;
+    this.balance += amount;
     if (this.balance < 0) throw new Error(`ballance of ${this.key} is negative`);
-    this.hash = this.hash();
   }
 }
 
@@ -273,7 +269,7 @@ class Transaction {
   }
 
   static validateSig(tx, address) {
-    return EC.keyFromPublic(address, "hex").verify(tx.hash, tx.inSig);
+    return EC.keyFromPublic(address, "hex").verify(tx.hash, tx.signature);
   }
 }
 
@@ -285,12 +281,12 @@ class TxPool {
 
   clear(states) {
     this.txs = [];
-    this.pendingStates = states;
+    this.pendingStates = states.map(s => new State(s.key, s.balance, s.stake));
   }
 
   addTx(tx) {
-    TxPool.validateTx(tx, this.pool.pendingStates);
-    if (this.txs.find((t) => t.hash === tx.hash)) return false; // 新規のTxではない
+    TxPool.validateTx(tx, this.pendingStates);
+    if (this.txs.find(t => t.hash === tx.hash)) return false; // 新規のTxではない
     this.pendingStates = StateStore.applyTransaction(this.pendingStates, tx);
     this.txs.push(tx);
     return true;
@@ -302,7 +298,7 @@ class TxPool {
       throw new Error(`invalid tx hash. expected: ${Transaction.hash(tx.from, tx.to, tx.amount)}`);
     }
     // 署名が正当かどうかチェック
-    if (!Transaction.validateSig(tx, tx.to)) {
+    if (!Transaction.validateSig(tx, tx.from)) {
       throw new Error(`invalid signature`);
     }
     // 送金額が残高以下であるかチェック
@@ -325,7 +321,7 @@ class Wallet {
   }
   // トランザクションに署名する関数
   signTx(tx) {
-    tx.inSig = toHexString(this.key.sign(tx.hash).toDER());
+    tx.signature = toHexString(this.key.sign(tx.hash).toDER());
     return tx;
   }
   // 投票に署名する関数

@@ -36,10 +36,11 @@ program
   .argument("<address>", "recipient wallet address")
   .requiredOption("-w, --wallet <string>", "the location of private key")
   .requiredOption("-a, --amount <number>", "the amount of coin to send")
+  .option("-p, --port <number>", "the port json endpoint", 3001)
   .action(async (subCmd, options) => {
     const wallet = new Wallet(readWallet(options.wallet));
     const tx = wallet.signTx(new Transaction(wallet.pubKey, subCmd, options.amount));
-    const result = await axios.post(`http://localhost:3000/sendTransaction`, tx);
+    const result = await axios.post(`http://localhost:${options.port}/sendTransaction`, tx);
     console.log(result.data);
   });
 

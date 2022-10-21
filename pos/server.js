@@ -53,7 +53,7 @@ function startServer(port, blockchain, broadcastTx) {
 
   app.post("/sendTransaction", (req, res) => {
     const { from, to, amount, signature } = req.body;
-    const tx = new Transaction(from, to, amount, signature);
+    const tx = new Transaction(from, to, Number(amount), signature);
     try {
       blockchain.pool.addTx(tx);
     } catch (e) {

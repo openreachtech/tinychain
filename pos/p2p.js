@@ -64,7 +64,7 @@ class P2P {
 
         case PacketTypes.Tx:
           try {
-            const tx = new Transaction(packet.from, packet.to, packet.amount, packet.signature);
+            const tx = new Transaction(packet.from, packet.to, Number(packet.amount), packet.signature);
             const isNew = self.chain.pool.addTx(tx); // トランザクションを自身のPoolに追加
             if (!isNew) break;
             console.log(`succeed adding tx ${tx.hash}`);
@@ -121,7 +121,7 @@ class P2P {
         case PacketTypes.Block:
           try {
             const votes = packet.votes.map((v) => new Vote(v.height, v.blockHash, v.voter, v.isYes, v.signature));
-            const txs = packet.txs.map((t) => new Transaction(t.from, t.to, t.amount, t.signature));
+            const txs = packet.txs.map(t => new Transaction(t.from, t.to, Number(t.amount), t.signature));
             const b = new Block(
               packet.height,
               packet.preHash,
@@ -142,7 +142,7 @@ class P2P {
           }
           break;
         case PacketTypes.PBlock: {
-          const txs = packet.txs.map((t) => new Transaction(t.from, t.to, t.amount, t.signature));
+          const txs = packet.txs.map(t => new Transaction(t.from, t.to, Number(t.amount), t.signature));
           const b = new Block(packet.height, packet.preHash, packet.timestamp, txs, packet.proposer, packet.stateRoot);
 
           if (self.chain.isProposer()) break; // プロポーザーならスキップ
