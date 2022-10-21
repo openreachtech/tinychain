@@ -121,7 +121,7 @@ class P2P {
         case PacketTypes.Block:
           try {
             const votes = packet.votes.map((v) => new Vote(v.height, v.blockHash, v.voter, v.isYes, v.signature));
-            const txs = packet.txs.map(t => new Transaction(t.from, t.to, Number(t.amount), t.signature));
+            const txs = packet.txs.map((t) => new Transaction(t.from, t.to, Number(t.amount), t.signature));
             const b = new Block(
               packet.height,
               packet.preHash,
@@ -142,7 +142,7 @@ class P2P {
           }
           break;
         case PacketTypes.PBlock: {
-          const txs = packet.txs.map(t => new Transaction(t.from, t.to, Number(t.amount), t.signature));
+          const txs = packet.txs.map((t) => new Transaction(t.from, t.to, Number(t.amount), t.signature));
           const b = new Block(packet.height, packet.preHash, packet.timestamp, txs, packet.proposer, packet.stateRoot);
 
           if (self.chain.isProposer()) break; // プロポーザーならスキップ

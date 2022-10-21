@@ -189,7 +189,7 @@ class StateStore {
   }
 
   balanceOf(addr) {
-    const state = this.states.find((state) => state.key === addr)
+    const state = this.states.find((state) => state.key === addr);
     return state ? state.balance : 0;
   }
 
@@ -198,7 +198,7 @@ class StateStore {
   }
 
   applyTransactions(txs) {
-    txs.forEach(tx => this.states = StateStore.applyTransaction(this.states, tx));
+    txs.forEach((tx) => (this.states = StateStore.applyTransaction(this.states, tx)));
   }
 
   applyRewards(propoer, votes) {
@@ -217,7 +217,7 @@ class StateStore {
     // fromのバランスを更新
     const fromIndex = states.findIndex((state) => state.key === tx.from);
     if (fromIndex < 0) throw new Error(`no state found by key(=${tx.from})`);
-    states[fromIndex].updateBalance(-tx.amount)
+    states[fromIndex].updateBalance(-tx.amount);
     // toのバランスを更新
     const toIndex = states.findIndex((state) => state.key === tx.to);
     if (toIndex < 0) {
@@ -281,12 +281,12 @@ class TxPool {
 
   clear(states) {
     this.txs = [];
-    this.pendingStates = states.map(s => new State(s.key, s.balance, s.stake));
+    this.pendingStates = states.map((s) => new State(s.key, s.balance, s.stake));
   }
 
   addTx(tx) {
     TxPool.validateTx(tx, this.pendingStates);
-    if (this.txs.find(t => t.hash === tx.hash)) return false; // 新規のTxではない
+    if (this.txs.find((t) => t.hash === tx.hash)) return false; // 新規のTxではない
     this.pendingStates = StateStore.applyTransaction(this.pendingStates, tx);
     this.txs.push(tx);
     return true;
