@@ -7,7 +7,7 @@ const bodyParser = require("body-parser");
 const { Tinychain, Transaction } = require("./blockchain");
 const gensisStates = require("./genesisStates");
 const { readWallet } = require("./utils");
-const { P2P, generateBroadcastBlockFunc } = require("./p2p");
+const { P2P, genBroadcastBlockFunc, genBroadcastTxFunc } = require("./p2p");
 
 const program = new Command();
 program.name("TinyNode").description("node for tinycoin").version("1.0.0");
@@ -24,10 +24,12 @@ program
     const blockchain = new Tinychain(wallet, gensisStates);
     const endpoints = options.p2pEndpoints ? options.p2pEndpoints.split(",") : [];
     const p2p = new P2P(options.p2pPort, endpoints, blockchain, wallet);
-
-    startServer(options.port, blockchain);
-
-    blockchain.start(generateBroadcastBlockFunc(p2p));
+    // p2p用のwebsocketサーバを起動
+    p2p.start();
+    // jsonエンドポイント用のサーバーを起動
+    startServer(options.port, blockchain, genBroadcastTxFunc(p2p));
+    // ブロック生成を開始
+    blockchain.start(genBroadcastBlockFunc(p2p));
   });
 
 program.parse();
@@ -37,7 +39,7 @@ process.on("unhandledRejection", (err) => {
   process.exit(1);
 });
 
-function startServer(port, blockchain) {
+function startServer(port, blockchain, broadcastTx) {
   const app = express();
   app.use(bodyParser.json());
 
@@ -51,13 +53,15 @@ function startServer(port, blockchain) {
 
   app.post("/sendTransaction", (req, res) => {
     const { from, to, amount, signature } = req.body;
+    const tx = new Transaction(from, to, amount, signature);
     try {
-      blockchain.pool.addTx(new Transaction(from, to, amount, signature));
+      blockchain.pool.addTx(tx);
     } catch (e) {
       res.send({ msg: `fail. err: ${e.message}` });
       return;
     }
     res.send({ msg: "success" });
+    broadcastTx(tx); // 受信したトランザクションを他のペアにブロードキャスト
   });
 
   app.listen(port, () => {

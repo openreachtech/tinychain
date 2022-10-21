@@ -21,7 +21,7 @@ class P2P {
     this.wallet = wallet;
   }
 
-  init() {
+  start() {
     this.server.on("connection", (socket) => this.initServerSocket(socket));
     this.endpoints.forEach((e) => this.initClient(new WebSocket(e), e));
   }
@@ -180,7 +180,7 @@ class P2P {
   }
 }
 
-const generateBroadcastBlockFunc = (p2p) =>
+const genBroadcastBlockFunc = (p2p) =>
   function (block) {
     p2p.sockets.forEach((s) =>
       s.send(
@@ -199,6 +199,21 @@ const generateBroadcastBlockFunc = (p2p) =>
     );
   };
 
+const genBroadcastTxFunc = (p2p) =>
+  function (tx) {
+    p2p.sockets.forEach((s) =>
+      s.send(
+        JSON.stringify({
+          type: PacketTypes.Tx,
+          from: tx.from,
+          to: tx.to,
+          amount: tx.amount,
+          signature: tx.signature,
+        })
+      )
+    );
+  };
+
 function main() {
   if (process.argv.length === 2) {
     const p2p = new P2P();
@@ -211,4 +226,4 @@ function main() {
 
 main();
 
-module.exports = { P2P, generateBroadcastBlockFunc };
+module.exports = { P2P, genBroadcastBlockFunc, genBroadcastTxFunc };
