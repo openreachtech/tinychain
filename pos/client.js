@@ -36,7 +36,7 @@ program
   .requiredOption("-w, --wallet <string>", "the location of private key")
   .requiredOption("-a, --amount <number>", "the amount of coin to send")
   .action(async (subCmd, options) => {
-    const wallet = readWallet(options.wallet);
+    const wallet = new Wallet(readWallet(options.wallet));
     const tx = wallet.signTx(new Transaction(wallet.pubKey, subCmd, options.amount));
     const result = await axios.post(`http://localhost:3000/sendTransaction`, tx);
     console.log(result.data);

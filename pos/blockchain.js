@@ -11,7 +11,7 @@ class Tinychain {
     this.store = new StateStore(genesisStates);
     this.pool = new TxPool(this.store.states);
     const stateRoot = StateStore.computeStateRoot(this.store.states);
-    this.blocks = [new Block(0, "", now(), [], stateRoot, this.store.validators())];
+    this.blocks = [new Block(0, "", 0, [], "", stateRoot, [])];
     this.votes = [];
     this.pendingBlock = null;
     this.stopFlg = false;
@@ -28,19 +28,20 @@ class Tinychain {
   }
 
   addBlock(newBlock) {
-    let isNew = this.latestBlock().height < newBlock.heigh ? true : false;
+    let isNew = this.latestBlock().height < newBlock.height ? true : false;
     if (!isNew) return false; // 新規のブロックでない場合はスキップ
     this.validateBlock(newBlock);
     this.blocks.push(newBlock);
     this.store.applyTransactions(newBlock.txs); // stateの更新
     this.store.applyRewards(newBlock.propoer, newBlock.votes); // リワードの付与
+    console.log(`${newBlock.heigh}th height of block added!`);
     return true;
   }
 
   validateNewBlock(b) {
     const preBlock = this.latestBlock();
-    const expectedData = TxPool.toData(this.pool.txs);
-    const expectedProposer = this.electProposer(this.store.validators(), b.heigh);
+    const expectedData = TxPool.serializeTxs(this.pool.txs);
+    const expectedProposer = this.electProposer(this.store.validators(), b.height);
     const expectedStateRoot = StateStore.computeStateRoot(this.pool.pendingStates);
     if (b.height !== preBlock.height + 1) {
       // ブロック高さが直前のブロックの次であるかチェック
@@ -60,16 +61,16 @@ class Tinychain {
     }
   }
 
-  electProposer(validators, heigh) {
+  electProposer(validators, height) {
     // ブロック高さのハッシュ値の先頭１byteを決定的な乱数として使う
-    const threshold = Number(`0x${SHA256(heigh).toString().slice(0, 2)}`);
+    const threshold = Number(`0x${SHA256(height).toString().slice(0, 2)}`);
     const totalStake = validators.reduce((pre, v) => pre + v.stake, 0);
-    let sumOfVotingPower;
+    let sumOfVotingPower = 0;
     return validators.find((v) => {
       let votingPower = 256 * (v.stake / totalStake); // VotingPowerはstake量によって荷重される
       sumOfVotingPower += votingPower;
       return threshold <= sumOfVotingPower; // VotingPowerがはじめて閾値を超えたバリデータをプロポーザとして選出
-    });
+    }).key;
   }
 
   validateBlock(b) {
@@ -95,44 +96,38 @@ class Tinychain {
 
   addVote(vote) {
     this.validateVote(vote);
-    let isNew;
-    const index = this.votes.indexOf((v) => v.voter === vote.voter && v.blockHash === vote.blockHash);
-    if (0 < index) {
-      isNew = this.votes[index].isNew === vote.isNew ? false : true;
-      this.votes[index] = vote; // ２重投票の場合は上書き
-    } else {
-      isNew = true;
-      this.votes.push(vote);
-    }
-    return isNew;
+    if (this.votes.find((v) => v.hash === vote.hash)) return false; // 既に存在する場合はスキップ
+    this.votes.push(vote);
+    return true;
   }
 
   validateVote(vote) {
     // heightが次のブロックと等しいかチェック
-    if (vote.heigh !== this.latestBlock().height + 1) {
+    if (vote.height !== this.latestBlock().height + 1) {
       throw new Error(`invalid height. expected: ${this.latestBlock().height + 1}`);
     }
     // hash値が正しく計算されているかチェック
-    if (vote.hash !== Vote.hash(vote.heigh, vote.voter, vote.isYes)) {
-      throw new Error(`invalid vote hash. expected: ${Vote.hash(vote.heigh, vote.voter, vote.isYes)}`);
+    const expected = Vote.hash(vote.heigh, vote.blockHash, vote.voter, vote.isYes);
+    if (vote.hash !== expected) {
+      throw new Error(`invalid vote hash. expected: ${expected}`);
     }
     // 署名が正当かどうかチェック
     if (!Vote.validateSig(vote)) {
       throw new Error(`invalid signature`);
     }
     // voterがvalidatorかチェック
-    if (this.state.validators().indexOf((v) => v.key === vote.voter) < 0) {
+    if (!this.store.validators().find((v) => v.key === vote.voter)) {
       throw new Error(`voter should be validator`);
     }
     // 当該プロックのプロポーザではないことをチェック
-    if (vote.voter === this.electProposer(this.state.validators(), this.heigh + 1)) {
+    if (vote.voter === this.electProposer(this.store.validators(), this.height + 1)) {
       throw new Error(`voter is proposer`);
     }
   }
 
-  tallyVotes() {
+  tallyVotes(votes) {
     // yes投票の割合
-    const rate = this.votes.filter((v) => v.isYes).length / (this.state.validators() - 1);
+    const rate = votes.filter((v) => v.isYes).length / (this.state.validators() - 1);
     // yesが2/3以上であれば合格
     return 2 / 3 <= rate;
   }
@@ -141,23 +136,24 @@ class Tinychain {
     const preBlock = this.latestBlock();
     const propoer = this.wallet.pubKey;
     const stateRoot = StateStore.computeStateRoot(this.pool.pendingStates);
-    return new Block(preBlock.height + 1, preBlock.hash, this.pool.txs, propoer, stateRoot, this.state.validators());
+    return new Block(preBlock.height + 1, preBlock.hash, now(), this.pool.txs, propoer, stateRoot);
   }
 
   isProposer() {
     const validators = this.store.validators();
     const nextHeight = this.latestBlock().height + 1;
-    return this.wallet.pubKey !== this.electProposer(validators, nextHeight);
+    return this.wallet.pubKey === this.electProposer(validators, nextHeight);
   }
 
   start(broadcastBlock) {
     setInterval(() => {
-      // 自分がproposerでなければスキップ
-      if (!this.isProposer()) return;
+      if (!this.isProposer()) return; // 自分がproposerでなければスキップ
+      if (this.pendingBlock) return; // 既にブロックをプロポーズ済みならスキップ
       // 自分がproposerならブロックを作ってブロードキャスト
       this.pendingBlock = this.generateBlock();
       broadcastBlock(this.pendingBlock);
-    }, 10 * 1000);
+      console.log(`proposing ${this.pendingBlock.height}th height of block`, this.pendingBlock);
+    }, 3 * 1000);
   }
 }
 
@@ -204,22 +200,22 @@ class StateStore {
 
   applyRewards(propoer, votes) {
     // proposerのリワードは”３”
-    this.states[this.states.indexOf((s) => s.key === propoer)].balance += 3;
+    this.states[this.states.findIndex((s) => s.key === propoer)].balance += 3;
     // yesに投票したvoterのリワードは”１”
     votes
       .filter((v) => v.isYes)
       .map((v) => v.voter)
       .forEach((voter) => {
-        this.states[this.states.indexOf((s) => s.key === voter)].balance += 1;
+        this.states[this.states.findIndex((s) => s.key === voter)].balance += 1;
       });
   }
 
   static applyTransaction(states, tx) {
     // fromのバランスを更新
-    const fromIndex = states.indexOf((state) => state.key === tx.from);
+    const fromIndex = states.findIndex((state) => state.key === tx.from);
     if (fromIndex < 0) throw new Error(`no state found by key(=${tx.from})`);
     // toのバランスを更新
-    const toIndex = states.indexOf((state) => state.key === tx.to);
+    const toIndex = states.findIndex((state) => state.key === tx.to);
     if (toIndex < 0) {
       states.push(new State(tx.to, tx.amount)); // stateを新規追加
     } else {
@@ -292,7 +288,7 @@ class TxPool {
 
   addTx(tx) {
     TxPool.validateTx(tx, this.pool.pendingStates);
-    if (0 < this.txs.indexOf((t) => t.hash === tx.hash)) return false; // 新規のTxではない
+    if (this.txs.find((t) => t.hash === tx.hash)) return false; // 新規のTxではない
     this.pendingStates = StateStore.applyTransaction(this.pendingStates, tx);
     this.txs.push(tx);
     return true;
@@ -344,12 +340,12 @@ class Wallet {
 
 class Vote {
   constructor(height, blockHash, addr, isYes, sig = "") {
-    this.heigh = height;
+    this.height = height;
     this.blockHash = blockHash;
     this.voter = addr;
     this.isYes = isYes;
     this.signature = sig;
-    this.hash = Vote.hash(this.voter, this.isYes);
+    this.hash = Vote.hash(this.heigh, this.blockHash, this.voter, this.isYes);
   }
 
   toString() {

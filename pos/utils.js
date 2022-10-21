@@ -3,7 +3,6 @@
 const { readFileSync } = require("fs");
 const { ec } = require("elliptic");
 const EC = new ec("secp256k1");
-const { Wallet } = require("./blockchain");
 
 const now = () => Math.floor(new Date().getTime() / 1000);
 
@@ -15,8 +14,7 @@ const toHexString = (bytes) => {
 
 const readWallet = (location) => {
   const buffer = readFileSync(location, "utf8");
-  const key = EC.keyFromPrivate(buffer.toString(), "hex");
-  return new Wallet(key);
+  return EC.keyFromPrivate(buffer.toString(), "hex");
 };
 
 module.exports = { toHexString, now, readWallet };

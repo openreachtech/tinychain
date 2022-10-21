@@ -4,13 +4,13 @@ const { Command } = require("commander");
 const express = require("express");
 const bodyParser = require("body-parser");
 
-const { Tinychain, Transaction } = require("./blockchain");
+const { Wallet, Tinychain, Transaction } = require("./blockchain");
 const gensisStates = require("./genesisStates");
 const { readWallet } = require("./utils");
-const { P2P, genBroadcastBlockFunc, genBroadcastTxFunc } = require("./p2p");
+const { P2P, genBroadcastPendingBlockFunc, genBroadcastTxFunc } = require("./p2p");
 
 const program = new Command();
-program.name("TinyNode").description("node for tinycoin").version("1.0.0");
+program.name("Tinychain").description("node of tinychain").version("1.0.0");
 
 program
   .command("chain")
@@ -20,7 +20,7 @@ program
   .option("--p2p-endpoints <items>", "the p2p connecting pairs list")
   .description("run tinychain server")
   .action(async (options) => {
-    const wallet = readWallet(options.wallet);
+    const wallet = new Wallet(readWallet(options.wallet));
     const blockchain = new Tinychain(wallet, gensisStates);
     const endpoints = options.p2pEndpoints ? options.p2pEndpoints.split(",") : [];
     const p2p = new P2P(options.p2pPort, endpoints, blockchain, wallet);
@@ -29,7 +29,7 @@ program
     // jsonエンドポイント用のサーバーを起動
     startServer(options.port, blockchain, genBroadcastTxFunc(p2p));
     // ブロック生成を開始
-    blockchain.start(genBroadcastBlockFunc(p2p));
+    blockchain.start(genBroadcastPendingBlockFunc(p2p));
   });
 
 program.parse();
@@ -65,6 +65,6 @@ function startServer(port, blockchain, broadcastTx) {
   });
 
   app.listen(port, () => {
-    console.log(`Tinycoin Node is listening on port ${port}`);
+    console.log(`http endpoint listening on port ${port}`);
   });
 }

@@ -13,7 +13,8 @@ const PacketTypes = {
 };
 
 class P2P {
-  constructor(port = 3001, endpoints = [], chain, wallet) {
+  constructor(port = 5001, endpoints = [], chain, wallet) {
+    this.port = port;
     this.server = new WebSocketServer({ port });
     this.endpoints = endpoints;
     this.sockets = [];
@@ -24,6 +25,7 @@ class P2P {
   start() {
     this.server.on("connection", (socket) => this.initServerSocket(socket));
     this.endpoints.forEach((e) => this.initClient(new WebSocket(e), e));
+    console.log(`p2p endpoint listening on port ${this.port}`);
   }
 
   initServerSocket(socket) {
@@ -75,26 +77,36 @@ class P2P {
 
         case PacketTypes.Vote:
           try {
-            const vote = new Vote(packet.voter, packet.isYes, packet.signature);
+            const vote = new Vote(packet.height, packet.blockHash, packet.voter, packet.isYes, packet.signature);
             const isNew = self.chain.addVote(vote); // voteを自身に追加
             if (!isNew) break;
             console.log(`succeed adding vote ${vote.hash}`);
             self.sockets.forEach((s) => s.send(data)); // 接続しているペアにブロードキャスト
-            if (!this.chain.isProposer()) break;
-            // proposerならブロックにsignしてブロードキャスト
-            this.chain.pendingBlock.vote = this.chain.votes;
-            const proposeBlock = this.wallet.signBlock(this.chain.pendingBlock);
+            if (!self.chain.isProposer()) break; // プロポーザかチェック
+            if (self.chain.votes.legth !== self.chain.store.validators().length - 1) break; // 投票率が100%かチェック
+
+            if (!self.chain.tallyVotes(self.chain.votes)) {
+              // 2/3以上の賛同を得られなければ、ブロックを作り直す
+              self.chain.proposeBlock = null;
+              self.chain.votes = [];
+              break;
+            }
+
+            // 2/3以上の賛同を得られれば、得票したらブロックにsignしてブロードキャスト
+            self.chain.pendingBlock.vote = self.chain.votes;
+            const newBlock = self.wallet.signBlock(self.chain.pendingBlock);
+            self.chain.addBlock(newBlock);
             self.sockets.forEach((s) =>
               s.send(
                 JSON.stringify({
                   type: PacketTypes.Block,
-                  height: proposeBlock.height,
-                  preHash: proposeBlock.preHash,
-                  timestamp: proposeBlock.timestamp,
-                  txs: proposeBlock.txs,
-                  stateRoot: proposeBlock.stateRoot,
-                  votes: proposeBlock.votes,
-                  signature: proposeBlock.signature,
+                  height: newBlock.height,
+                  preHash: newBlock.preHash,
+                  timestamp: newBlock.timestamp,
+                  txs: newBlock.txs,
+                  stateRoot: newBlock.stateRoot,
+                  votes: newBlock.votes,
+                  signature: newBlock.signature,
                 })
               )
             );
@@ -134,6 +146,10 @@ class P2P {
             packet.stateRoot
           );
 
+          if (self.chain.isProposer()) break; // プロポーザーならスキップ
+
+          console.log(`received ${b.height}th height of proposed block`, b);
+
           // 既に同じブロックに投票済みならスキップ
           if (
             0 <
@@ -153,6 +169,7 @@ class P2P {
             self.chain.validateNewBlock(b);
             isYes = true; // validなブロックの場合は、positive vote
           } catch (e) {
+            console.log(e);
             isYes = false; // invalidなブロックの場合は、negative vote
           }
 
@@ -163,12 +180,15 @@ class P2P {
             s.send(
               JSON.stringify({
                 type: PacketTypes.Vote,
+                height: v.height,
+                blockHash: v.blockHash,
                 voter: v.voter,
                 isYes: v.isYes,
                 signature: v.signature,
               })
             )
           );
+          console.log(`voted ${v.isYes ? "yes" : "no"} to proposed block`);
 
           break;
         }
@@ -180,12 +200,12 @@ class P2P {
   }
 }
 
-const genBroadcastBlockFunc = (p2p) =>
+const genBroadcastPendingBlockFunc = (p2p) =>
   function (block) {
     p2p.sockets.forEach((s) =>
       s.send(
         JSON.stringify({
-          type: PacketTypes.Block,
+          type: PacketTypes.PBlock,
           height: block.height,
           preHash: block.preHash,
           timestamp: block.timestamp,
@@ -214,16 +234,4 @@ const genBroadcastTxFunc = (p2p) =>
     );
   };
 
-function main() {
-  if (process.argv.length === 2) {
-    const p2p = new P2P();
-    p2p.init();
-  } else {
-    const p2p = new P2P(3002, ["ws://localhost:3001"]);
-    p2p.init();
-  }
-}
-
-main();
-
-module.exports = { P2P, genBroadcastBlockFunc, genBroadcastTxFunc };
+module.exports = { P2P, genBroadcastPendingBlockFunc, genBroadcastTxFunc };
