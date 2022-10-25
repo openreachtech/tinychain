@@ -7,7 +7,7 @@ const bodyParser = require("body-parser");
 const { Wallet, Tinychain, Transaction } = require("./blockchain");
 const gensisStates = require("./genesisStates");
 const { readWallet } = require("./utils");
-const { P2P, genBroadcastPendingBlockFunc, genBroadcastTxFunc } = require("./p2p");
+const { P2P, genBroadcastProposeBlockFunc, genBroadcastTxFunc } = require("./p2p");
 
 const program = new Command();
 program.name("Tinychain").description("node of tinychain").version("1.0.0");
@@ -29,7 +29,7 @@ program
     // jsonエンドポイント用のサーバーを起動
     startServer(options.port, blockchain, genBroadcastTxFunc(p2p));
     // ブロック生成を開始
-    blockchain.start(genBroadcastPendingBlockFunc(p2p));
+    blockchain.start(genBroadcastProposeBlockFunc(p2p));
   });
 
 program.parse();

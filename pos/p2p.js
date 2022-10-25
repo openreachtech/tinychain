@@ -16,15 +16,15 @@ class P2P {
   constructor(port = 5001, endpoints = [], chain, wallet) {
     this.port = port;
     this.server = new WebSocketServer({ port });
-    this.endpoints = endpoints;
-    this.sockets = [];
-    this.chain = chain;
-    this.wallet = wallet;
+    this.endpoints = endpoints; // 接続するPeerのエンドポイント
+    this.sockets = []; // 接続しているPeer
+    this.chain = chain; // Tinychain
+    this.wallet = wallet; // 自分のWallet
   }
 
   start() {
-    this.server.on("connection", (socket) => this.initServerSocket(socket));
-    this.endpoints.forEach((e) => this.initClient(new WebSocket(e), e));
+    this.server.on("connection", (socket) => this.initServerSocket(socket)); // Listenするsocketの初期化
+    this.endpoints.forEach((e) => this.initClient(new WebSocket(e), e)); // 接続するsocketの初期化
     console.log(`p2p endpoint listening on port ${this.port}`);
   }
 
@@ -34,11 +34,13 @@ class P2P {
     });
 
     this.handleMessage(socket); // messageハンドラーを登録
-    this.sockets.push(socket); // 準備のできたソケットを登録
+
+    this.sockets.push(socket); // 初期化済みソケットを登録
   }
 
   initClient(ws, endpoint) {
     const self = this;
+
     ws.on("open", function open() {
       self.handleMessage(ws); // メッセージハンドラーを登録
       const ack = { type: PacketTypes.Ack, content: `hello ${endpoint}!` };
@@ -49,40 +51,48 @@ class P2P {
       console.log(`err happen at ${endpoint} connection`, e);
     });
 
-    this.sockets.push(ws); // 準備のできたソケットを登録
+    this.sockets.push(ws); // 初期化済みソケットを登録
   }
 
   handleMessage(socket) {
     const self = this;
+
+    // 接続しているPeerからメッセージを受信
     socket.on("message", (data) => {
       const packet = JSON.parse(data);
 
       switch (packet.type) {
+        // 接続確認メッセージの場合、ログを出すだけ
         case PacketTypes.Ack:
           console.log(`received ack message: ${packet.content}`);
           break;
 
+        // トランザクションを受信した場合、トランザクションプールに追加
         case PacketTypes.Tx:
           try {
             const tx = new Transaction(packet.from, packet.to, Number(packet.amount), packet.signature);
             const isNew = self.chain.pool.addTx(tx); // トランザクションを自身のPoolに追加
-            if (!isNew) break;
+            if (!isNew) break; // 新しいトランザクションでない場合は、ブロードキャストしない
             console.log(`succeed adding tx ${tx.hash}`);
-            self.sockets.forEach((s) => s.send(data)); // 接続しているペアにブロードキャスト
+            self.sockets.forEach((s) => s.send(data)); // 接続しているPeerにブロードキャスト
           } catch (e) {
             console.error(e);
             break;
           }
           break;
 
+        // 投票を受信した場合、votesに追加
+        // 自分がプロポーザで2/3以上の賛同を得られた場合は、確定ブロックをブロードキャスト
         case PacketTypes.Vote:
           try {
             const vote = new Vote(packet.height, packet.blockHash, packet.voter, packet.isYes, packet.signature);
             const isNew = self.chain.addVote(vote); // voteを自身に追加
-            if (!isNew) break;
+            if (!isNew) break; // 新しいvoteでない場合は、ブロードキャストしない
             console.log(`succeed adding vote ${vote.hash}`);
-            self.sockets.forEach((s) => s.send(data)); // 接続しているペアにブロードキャスト
-            if (!self.chain.isProposer()) break; // プロポーザかチェック
+            self.sockets.forEach((s) => s.send(data)); // 接続しているPeerにブロードキャスト
+            if (!self.chain.isProposer()) break;
+
+            // 自分がプロポーザの場合は、投票を集計する
             if (self.chain.votes.length !== self.chain.store.validators().length - 1) break; // 投票率が100%かチェック
             if (!self.chain.tallyVotes(self.chain.votes)) {
               // 2/3以上の賛同を得られなければ、ブロックを作り直す
@@ -118,56 +128,55 @@ class P2P {
             break;
           }
           break;
+
+        // ブロックを受信した場合、チェーンに追加
         case PacketTypes.Block:
           try {
-            const votes = packet.votes.map((v) => new Vote(v.height, v.blockHash, v.voter, v.isYes, v.signature));
-            const txs = packet.txs.map((t) => new Transaction(t.from, t.to, Number(t.amount), t.signature));
             const b = new Block(
               packet.height,
               packet.preHash,
               packet.timestamp,
-              txs,
+              packet.txs.map((t) => new Transaction(t.from, t.to, Number(t.amount), t.signature)),
               packet.proposer,
               packet.stateRoot,
-              votes,
+              packet.votes.map((v) => new Vote(v.height, v.blockHash, v.voter, v.isYes, v.signature)),
               packet.signature
             );
             const isNew = self.chain.addBlock(b);
-            if (!isNew) break;
+            if (!isNew) break; // 新しいブロックでねい場合は、ブロードキャストしない
             console.log(`succeed adding block ${b.hash}`);
-            self.sockets.forEach((s) => s.send(data)); // 接続しているペアにブロードキャスト
+            self.sockets.forEach((s) => s.send(data)); // 接続しているPeerにブロードキャスト
           } catch (e) {
             console.error(e);
             break;
           }
           break;
+
+        // プロポーズブロックを受信した場合は、検証して正しい場合はYesに、不正の場合はNoに投票する
         case PacketTypes.PBlock: {
           const txs = packet.txs.map((t) => new Transaction(t.from, t.to, Number(t.amount), t.signature));
           const b = new Block(packet.height, packet.preHash, packet.timestamp, txs, packet.proposer, packet.stateRoot);
-
-          if (self.chain.isProposer()) break; // プロポーザーならスキップ
-
+          // プロポーザーなら投票には参加しない
+          if (self.chain.isProposer()) break;
           // 既に同じブロックに投票済みならスキップ
           if (self.chain.votes.find((v) => v.blockHash === b.hash && v.voter === self.wallet.pubKey)) {
             break;
           }
-
-          console.log(`received ${b.height} th height of proposed block`);
-
           // プロポーズされたブロックをブロードキャスト
           self.sockets.forEach((s) => s.send(data));
+          console.log(`received ${b.height} th height of proposed block`);
 
           // 正しいブロックなら yes に 不正なブロックなら no に投票
           let isYes;
           try {
             self.chain.validateNewBlock(b);
-            isYes = true; // validなブロックの場合は、positive vote
+            isYes = true; // validなブロックの場合は、yes vote
           } catch (e) {
             console.log(e);
-            isYes = false; // invalidなブロックの場合は、negative vote
+            isYes = false; // invalidなブロックの場合は、no vote
           }
 
-          // 投票を作ってブロードキャスト
+          // Voteを作ってブロードキャスト
           const v = self.wallet.signVote(new Vote(b.height, b.hash, self.wallet.pubKey, isYes));
           self.chain.addVote(v); // 自身に追加
           self.sockets.forEach((s) =>
@@ -183,9 +192,9 @@ class P2P {
             )
           );
           console.log(`voted ${v.isYes ? "yes" : "no"} to proposed block`);
-
           break;
         }
+
         default:
           console.log(`received unsupported packet`, packet);
           break;
@@ -194,7 +203,8 @@ class P2P {
   }
 }
 
-const genBroadcastPendingBlockFunc = (p2p) =>
+// 「Tinychain用のプロポーズブロックをブロードキャストする関数」を生成する関数
+const genBroadcastProposeBlockFunc = (p2p) =>
   function (block) {
     p2p.sockets.forEach((s) =>
       s.send(
@@ -213,6 +223,7 @@ const genBroadcastPendingBlockFunc = (p2p) =>
     );
   };
 
+// 「server用の受信したトランザクションをブロードキャストする関数」を生成する関数
 const genBroadcastTxFunc = (p2p) =>
   function (tx) {
     p2p.sockets.forEach((s) =>
@@ -228,4 +239,4 @@ const genBroadcastTxFunc = (p2p) =>
     );
   };
 
-module.exports = { P2P, genBroadcastPendingBlockFunc, genBroadcastTxFunc };
+module.exports = { P2P, genBroadcastProposeBlockFunc, genBroadcastTxFunc };

@@ -7,24 +7,16 @@ const { now, toHexString } = require("./utils");
 
 class Tinychain {
   constructor(wallet, genesisStates) {
-    this.wallet = wallet ? wallet : new Wallet(); // コインベースTxを受け取るウォレット
-    this.store = new StateStore(genesisStates);
+    this.wallet = wallet ? wallet : new Wallet(); // Rewardを受け取るウォレット
     this.pool = new TxPool(genesisStates);
-    const stateRoot = StateStore.computeStateRoot(this.store.states);
-    this.blocks = [new Block(0, "", 0, [], "", stateRoot, [])];
+    this.store = new StateStore(genesisStates);
+    this.blocks = [new Block(0, "", 0, [], "", StateStore.computeStateRoot(this.store.states), [])];
     this.votes = [];
     this.pendingBlock = null;
-    this.stopFlg = false;
   }
 
   latestBlock() {
     return this.blocks[this.blocks.length - 1];
-  }
-
-  initRound() {
-    this.pool.clear(this.store.states); // トランザクションpool内のTxsをクリア & ペンディングStateをstoreのstateと同期
-    this.votes = [];
-    this.pendingBlock = null;
   }
 
   addBlock(newBlock) {
@@ -34,8 +26,30 @@ class Tinychain {
     this.blocks.push(newBlock);
     this.store.applyTransactions(newBlock.txs); // stateの更新
     this.store.applyRewards(newBlock.proposer, newBlock.votes); // リワードの付与
-    this.initRound(); // クリア
+    this.pool.clear(this.store.states); // ペンディングTxsとStatesのクリア
+    this.votes = []; // 投票のクリア
+    this.pendingBlock = null; // ペンディングBlockのクリア
     return true;
+  }
+
+  validateBlock(b) {
+    const preBlock = this.latestBlock();
+    const expHash = Block.hash(b.height, b.preHash, b.timestamp, b.txs, b.proposer, b.stateRoot, b.votes);
+    if (b.height !== preBlock.height + 1) {
+      // ブロック高さが直前のブロックの次であるかチェック
+      throw new Error(`invalid heigh. expected: ${preBlock.height + 1}`);
+    } else if (b.preHash !== preBlock.hash) {
+      // 前ブロックハッシュ値が直前のブロックのハッシュ値と一致するかチェック
+      throw new Error(`invalid preHash. expected: ${preBlock.hash}`);
+    } else if (b.hash !== expHash) {
+      // ハッシュ値が正しいく計算されているかチェック
+      throw new Error(`invalid hash. expected: ${expHash}`);
+    }
+    Block.validateSig(b); // 署名が正しいかチェック
+    // 2/3以上のyesを集めているかチェック
+    if (!this.tallyVotes(b.votes)) {
+      throw new Error(`insufficient positive votes`);
+    }
   }
 
   validateNewBlock(b) {
@@ -73,27 +87,6 @@ class Tinychain {
     }).key;
   }
 
-  validateBlock(b) {
-    const preBlock = this.latestBlock();
-    const expHash = Block.hash(b.height, b.preHash, b.timestamp, b.txs, b.proposer, b.stateRoot, b.votes);
-    if (b.height !== preBlock.height + 1) {
-      // ブロック高さが直前のブロックの次であるかチェック
-      throw new Error(`invalid heigh. expected: ${preBlock.height + 1}`);
-    } else if (b.preHash !== preBlock.hash) {
-      // 前ブロックハッシュ値が直前のブロックのハッシュ値と一致するかチェック
-      throw new Error(`invalid preHash. expected: ${preBlock.hash}`);
-    } else if (b.hash !== expHash) {
-      // ハッシュ値が正しいく計算されているかチェック
-      throw new Error(`invalid hash. expected: ${expHash}`);
-    }
-    // 署名が正しいかチェック
-    Block.validateSig(b);
-    // 2/3以上のyesを集めているかチェック
-    if (!this.tallyVotes(b.votes)) {
-      throw new Error(`insufficient positive votes`);
-    }
-  }
-
   addVote(vote) {
     let isNew = this.latestBlock().height < vote.height ? true : false;
     if (!isNew) return false; // 新規のブロックに対してではない場合は、スキップ
@@ -128,10 +121,8 @@ class Tinychain {
   }
 
   tallyVotes(votes) {
-    // yes投票の割合
-    const rate = votes.filter((v) => v.isYes).length / (this.store.validators().length - 1);
-    // yesが2/3以上であれば合格
-    return 2 / 3 <= rate;
+    const rate = votes.filter((v) => v.isYes).length / (this.store.validators().length - 1); // yes投票の割合
+    return 2 / 3 <= rate; // yesが2/3以上であれば合格
   }
 
   generateBlock() {
@@ -183,6 +174,23 @@ class Block {
   }
 }
 
+class State {
+  constructor(addr, amount, stake = 0) {
+    this.key = addr;
+    this.balance = amount;
+    this.stake = stake;
+  }
+
+  toString() {
+    return JSON.stringify(this);
+  }
+
+  updateBalance(amount) {
+    this.balance += amount;
+    if (this.balance < 0) throw new Error(`ballance of ${this.key} is negative`);
+  }
+}
+
 class StateStore {
   constructor(states = []) {
     this.states = states;
@@ -202,14 +210,12 @@ class StateStore {
   }
 
   applyRewards(propoer, votes) {
-    // proposerのリワードは”３”
-    this.states[this.states.findIndex((s) => s.key === propoer)].balance += 3;
-    // yesに投票したvoterのリワードは”１”
+    this.states[this.states.findIndex((s) => s.key === propoer)].balance += 3; // proposerのリワードは”３”
     votes
       .filter((v) => v.isYes)
       .map((v) => v.voter)
       .forEach((voter) => {
-        this.states[this.states.findIndex((s) => s.key === voter)].balance += 1;
+        this.states[this.states.findIndex((s) => s.key === voter)].balance += 1; // yesに投票したvoterのリワードは”１”
       });
   }
 
@@ -231,23 +237,6 @@ class StateStore {
   static computeStateRoot(states) {
     // StateRootは「全statesを文字列にして繋げたもののhash値」とする
     return SHA256(states.reduce((pre, state) => pre + state.toString(), "")).toString();
-  }
-}
-
-class State {
-  constructor(addr, amount, stake = 0) {
-    this.key = addr;
-    this.balance = amount;
-    this.stake = stake;
-  }
-
-  toString() {
-    return JSON.stringify(this);
-  }
-
-  updateBalance(amount) {
-    this.balance += amount;
-    if (this.balance < 0) throw new Error(`ballance of ${this.key} is negative`);
   }
 }
 
@@ -313,29 +302,6 @@ class TxPool {
   }
 }
 
-class Wallet {
-  constructor(key) {
-    this.key = key ? key : EC.genKeyPair(); // 秘密鍵の生成
-    this.priKey = this.key.getPrivate();
-    this.pubKey = this.key.getPublic().encode("hex"); // この公開鍵をアドレスとして使う
-  }
-  // トランザクションに署名する関数
-  signTx(tx) {
-    tx.signature = toHexString(this.key.sign(tx.hash).toDER());
-    return tx;
-  }
-  // 投票に署名する関数
-  signVote(vote) {
-    vote.signature = toHexString(this.key.sign(vote.hash).toDER());
-    return vote;
-  }
-  // Blockに署名する関数
-  signBlock(block) {
-    block.signature = toHexString(this.key.sign(block.hash).toDER());
-    return block;
-  }
-}
-
 class Vote {
   constructor(height, blockHash, addr, isYes, sig = "") {
     this.height = height;
@@ -356,6 +322,29 @@ class Vote {
 
   static validateSig(vote) {
     return EC.keyFromPublic(vote.voter, "hex").verify(vote.hash, vote.signature);
+  }
+}
+
+class Wallet {
+  constructor(key) {
+    this.key = key ? key : EC.genKeyPair(); // 秘密鍵の生成
+    this.priKey = this.key.getPrivate();
+    this.pubKey = this.key.getPublic().encode("hex"); // この公開鍵をアドレスとして使う
+  }
+  // トランザクションに署名する関数
+  signTx(tx) {
+    tx.signature = toHexString(this.key.sign(tx.hash).toDER());
+    return tx;
+  }
+  // 投票に署名する関数
+  signVote(vote) {
+    vote.signature = toHexString(this.key.sign(vote.hash).toDER());
+    return vote;
+  }
+  // Blockに署名する関数
+  signBlock(block) {
+    block.signature = toHexString(this.key.sign(block.hash).toDER());
+    return block;
   }
 }
 
