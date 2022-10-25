@@ -176,9 +176,9 @@ class Block {
 
 class State {
   constructor(addr, amount, stake = 0) {
-    this.key = addr;
+    this.key = addr; // walletのpubkeyをkeyとして使う
     this.balance = amount;
-    this.stake = stake;
+    this.stake = stake; // stakeは簡略化のためGenesisStateからのみ設定する
   }
 
   toString() {
@@ -193,7 +193,7 @@ class State {
 
 class StateStore {
   constructor(states = []) {
-    this.states = states;
+    this.states = states; // stateを配列の形で保持する
   }
 
   balanceOf(addr) {
