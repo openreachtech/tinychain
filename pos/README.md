@@ -75,11 +75,388 @@ class StateStore {
 ## トランザクションのライフサイクル
 
 前回と同様にトランザクションのライフサイクルを通して、コードを解説します。
+章立てとしては、１から４までは POW の時と同じです。
 
-- Step1: Transaction を作る
+- Step1: Wallet を作る
+- Step2: Transaction を作る
 - Step3: Transaction Pool へ Transaction を追加する
 - Step4: Block を Transaction Pool 内のトランザクションから作る
-- Step5: マイニング
-- Step6: Block をチェーンへ追加
+- Step5: 投票
+- Step6: 投票を集計して、正規のブロックを作る
+- Step7: ブロックを追加する
 
-### Step1: Transaction を作る
+### Step1: Wallet を作る
+
+ここは POW と[共通](https://github.com/openreachtech/tinychain/tree/main/pow#step1-wallet-%E3%82%92%E4%BD%9C%E3%82%8B)です。
+
+### Step2: Transaction を作る
+
+アカウントモデルのトランザクションは UTXO と比べるとシンプルです。
+未消費のトランザクションを参照する必要がないので「誰から（from）」「誰に(to)」「どれだけ送るか（amount）」の３つの情報が入っているだけです。
+トランザクションを区別するために、通常はシークエンシャルにインクリメントされるノンスを入れる必要がありますが、今回は省きました。
+
+```javascript
+class Transaction {
+  constructor(from, to, amount, sig = "") {
+    this.from = from;
+    this.to = to;
+    this.amount = amount;
+    this.signature = sig;
+    this.hash = Transaction.hash(from, to, amount);
+  }
+  ...
+}
+```
+
+トランザクションに署名して、Tinychain の Node の JSON エンドポイント(`/sendTransaction`)に送ります。
+
+```javascript
+// 秘密鍵を読み込んで、ウォレットを作る
+const wallet = new Wallet(readWallet(walletPath));
+// トランザクションを作り署名する
+const tx = wallet.signTx(new Transaction(wallet.pubKey, to, amount));
+// トランザクションをNodeのJSONエンドポイントへ送る
+await axios.post(`http://localhost:3001/sendTransaction`, tx);
+```
+
+### Step3: Transaction Pool へ Transaction を追加する
+
+POW と同様にバリデーションを行い、正しいトランザクションのみをプールへ追加します。
+前回と異なるのは`pendingStates`への apply の部分です。
+
+```javascript
+class TxPool {
+  constructor(states) {
+    this.txs = [];
+    this.pendingStates = states;
+  }
+
+  addTx(tx) {
+    TxPool.validateTx(tx, this.pendingStates);
+    if (this.txs.find((t) => t.hash === tx.hash)) return false; // 新規のTxではない
+    this.pendingStates = StateStore.applyTransaction(this.pendingStates, tx);
+    this.txs.push(tx);
+    return true;
+  }
+  ...
+}
+```
+
+トランザクションプールに、ペンディング状態の States を保持しておいて、トランザクションが追加される度に更新します。
+
+```javascript
+class StateStore {
+  ...
+  static applyTransaction(states, tx) {
+    // fromのバランスを更新
+    const fromIndex = states.findIndex((state) => state.key === tx.from);
+    if (fromIndex < 0) throw new Error(`no state found by key(=${tx.from})`);
+    states[fromIndex].updateBalance(-tx.amount);
+    // toのバランスを更新
+    const toIndex = states.findIndex((state) => state.key === tx.to);
+    if (toIndex < 0) {
+      states.push(new State(tx.to, tx.amount)); // stateを新規追加
+    } else {
+      states[toIndex].updateBalance(tx.amount); // stateを更新
+    }
+    return states;
+  }
+  ...
+}
+```
+
+これはトランザクションの検証時に、送金金額がペンディング状態の残高以下であることを確認するためです。
+
+```javascript
+static validateTx(tx, states) {
+  ....
+  // 送金額が残高以下であるかチェック
+  const balance = states.find((s) => s.key === tx.from).balance;
+  if (balance < tx.amount) {
+    throw new Error(`insufficient fund(=${balance})`);
+  }
+}
+```
+
+### Step4: Block を Transaction Pool 内のトランザクションから作る
+
+Tinychain を立ち上げると、この部分が 10 秒間隔で定期実行されます。
+自身がが次のブロック高さのブロックプロポーザである場合、Tx プールのトランザクションをまとめて、ブロックを作り、ブロードキャストします。
+
+```javascript
+class Tinychain {
+  ...
+  start(broadcastBlock) {
+    setInterval(() => {
+      if (!this.isProposer()) return; // 自分がproposerでなければスキップ
+      if (this.pendingBlock) return; // 既にブロックをプロポーズ済みならスキップ
+      // 自分がproposerならブロックを作ってブロードキャスト
+      this.pendingBlock = this.generateBlock();
+      broadcastBlock(this.pendingBlock);
+      console.log(`proposing ${this.pendingBlock.height} th height of block`);
+    }, 10 * 1000); // 10秒間隔で実行する
+  }
+}
+```
+
+プロポーザの選出は、ブロック高さから決定的に決まります。
+
+1. まず、ブロック高さのハッシュ値の先頭１ byte（``0x${SHA256(height.toString()).toString().slice(0, 2)`）を計算します
+2. 次に、stake 量の総和を計算します
+3. そして、stake 量によって荷重された VotingPower を計算します。255 で掛けているのは、今回、乱数としてつかった 1byte の最大値が 255 であり、その割合を出すためです。
+4. バリデータをイテレートするなかで、初めて VotingPower の総和が、ブロック高さから求めた乱数（threshold）を超えた時のバリデータをプロポーザとして選出します
+
+```javascript
+class Tinychain {
+  ...
+  electProposer(validators, height) {
+    // 1. ブロック高さのハッシュ値の先頭１byteを決定的な乱数として使う
+    const threshold = Number(`0x${SHA256(height.toString()).toString().slice(0, 2)}`);
+    // 2. Stake量の総和を計算
+    const totalStake = validators.reduce((pre, v) => pre + v.stake, 0);
+    let sumOfVotingPower = 0;
+    return validators.find((v) => {
+      // 3. stake量によって荷重されたVotingPowerを計算stake量によって荷重されたVotingPowerを計算
+      //    255で掛けているのは、今回、乱数としてつかった1byteの最大値が255であり、その割合を出すため
+      let votingPower = 255 * (v.stake / totalStake);
+      sumOfVotingPower += votingPower;
+      // 4. 初めてVotingPowerの総和が、ブロック高さから求めた乱数（threshold）を超えた時のバリデータをプロポーザとして選出
+      return threshold <= sumOfVotingPower;
+    }).key;
+  }
+  ...
+}
+```
+
+- Step5: 投票
+  プロポーズされたブロックを受信したら、検証して正しい場合は Yes に、不正の場合は No に投票する
+
+```javascript
+class P2P {
+  handleMessage(socket) {
+    ...
+    socket.on("message", (data) => {
+      switch (packet.type) {
+        ...
+        // プロポーズブロックを受信した場合は、検証して正しい場合はYesに、不正の場合はNoに投票する
+        case PacketTypes.PBlock: {
+          const txs = packet.txs.map((t) => new Transaction(t.from, t.to, Number(t.amount), t.signature));
+          const b = new Block(packet.height, packet.preHash, packet.timestamp, txs, packet.proposer, packet.stateRoot);
+          // プロポーザーなら投票には参加しない
+          if (self.chain.isProposer()) break;
+          // 既に同じブロックに投票済みならスキップ
+          if (self.chain.votes.find((v) => v.blockHash === b.hash && v.voter === self.wallet.pubKey)) {
+            break;
+          }
+          // プロポーズされたブロックをブロードキャスト
+          self.sockets.forEach((s) => s.send(data));
+          console.log(`received ${b.height} th height of proposed block`);
+
+          // 正しいブロックなら yes に 不正なブロックなら no に投票
+          let isYes;
+          try {
+            self.chain.validateBlock(b);
+            isYes = true; // validなブロックの場合は、yes vote
+          } catch (e) {
+            console.log(e);
+            isYes = false; // invalidなブロックの場合は、no vote
+          }
+
+          // Voteを作ってブロードキャスト
+          const v = self.wallet.signVote(new Vote(b.height, b.hash, self.wallet.pubKey, isYes));
+          self.chain.addVote(v); // 自身に追加
+          self.sockets.forEach((s) =>
+            s.send(
+              JSON.stringify({
+                type: PacketTypes.Vote,
+                height: v.height,
+                blockHash: v.blockHash,
+                voter: v.voter,
+                isYes: v.isYes,
+                signature: v.signature,
+              })
+            )
+          );
+          console.log(`voted ${v.isYes ? "yes" : "no"} to proposed block`);
+          break;
+        }
+      ...
+      }
+    }
+  }
+}
+```
+
+ブロックの検証は、前回と共通する部分が多いです。
+`StateRootの計算結果が一致するかチェック`この部分が POS らしいです。
+
+```javascript
+class Tinychain {
+  ...
+  validateBlock(b, isApproved = false) {
+    const preBlock = this.latestBlock();
+    const expectedProposer = this.electProposer(this.store.validators(), b.height);
+    const states = StateStore.applyTransactions(this.store.states, b.txs);
+    const expectedStateRoot = StateStore.computeStateRoot(states);
+    const expHash = Block.hash(b.height, b.preHash, b.timestamp, b.txs, b.proposer, b.stateRoot, b.votes);
+    if (b.height !== preBlock.height + 1) {
+      // ブロック高さが直前のブロックの次であるかチェック
+      throw new Error(`invalid heigh. expected: ${preBlock.height + 1}`);
+    } else if (b.preHash !== preBlock.hash) {
+      // 前ブロックハッシュ値が直前のブロックのハッシュ値と一致するかチェック
+      throw new Error(`invalid preHash. expected: ${preBlock.hash}`);
+    } else if (b.proposer !== expectedProposer) {
+      // 正しいブロッックプロポーザーかチェック
+      throw new Error(`invalid propoer. expected: ${expectedProposer}`);
+    } else if (b.stateRoot !== expectedStateRoot) {
+      // StateRootの計算結果が一致するかチェック
+      throw new Error(`invalid state root. expected: ${expectedStateRoot}`);
+    } else if (b.hash !== expHash) {
+      // ハッシュ値が正しいく計算されているかチェック
+      throw new Error(`invalid hash. expected: ${expHash}`);
+    }
+    Block.validateSig(b); // 署名が正しいかチェック
+    // 承認されたブロックの場合は、2/3以上のyesを集めているかチェック
+    if (isApproved) {
+      if (!this.tallyVotes(b.votes)) {
+        throw new Error(`insufficient positive votes`);
+      }
+    }
+  }
+  ...
+}
+```
+
+パブリックブロックチェーンでは、StateRoot は木構造で保持された States の Root 値です。
+今回は、簡略化のため State を配列の形で保持しているので、単純に`全statesを文字列にして繋げたもののhash値`で代替します。
+
+```javascript
+class StateStore {
+  ...
+  static computeStateRoot(states) {
+    // StateRootは「全statesを文字列にして繋げたもののhash値」とする
+    return SHA256(states.reduce((pre, state) => pre + state.toString(), "")).toString();
+  }
+}
+```
+
+### Step6: 投票を集計して、正規のブロックを作る
+
+自信がブロックプロポーザであり、受信した投票が規定の数に達したら、集計して、賛同を得られた場合は、正規のブロックを作り、ブロードキャストします。
+
+```javascript
+class P2P {
+  handleMessage(socket) {
+    ...
+    socket.on("message", (data) => {
+      switch (packet.type) {
+        ...
+        // 投票を受信した場合、votesに追加
+        // 自分がプロポーザで2/3以上の賛同を得られた場合は、確定ブロックをブロードキャスト
+        case PacketTypes.Vote:
+          try {
+            const vote = new Vote(packet.height, packet.blockHash, packet.voter, packet.isYes, packet.signature);
+            const isNew = self.chain.addVote(vote); // voteを自身に追加
+            if (!isNew) break; // 新しいvoteでない場合は、ブロードキャストしない
+            console.log(`succeed adding vote ${vote.hash}`);
+            self.sockets.forEach((s) => s.send(data)); // 接続しているPeerにブロードキャスト
+            if (!self.chain.isProposer()) break;
+
+            // 自分がプロポーザの場合は、投票を集計する
+            if (self.chain.votes.length !== self.chain.store.validators().length - 1) break; // 投票率が100%かチェック
+            if (!self.chain.tallyVotes(self.chain.votes)) {
+              // 2/3以上の賛同を得られなければ、ブロックを作り直す
+              self.chain.proposeBlock = null;
+              self.chain.votes = [];
+              break;
+            }
+
+            // 2/3以上の賛同を得られれば、得票したらブロックにsignしてブロードキャスト
+            console.log(`proposed block was accepted!`);
+            let b = self.chain.pendingBlock;
+            const newBlock = self.wallet.signBlock(
+              new Block(b.height, b.preHash, b.timestamp, b.txs, b.proposer, b.stateRoot, self.chain.votes)
+            );
+            self.chain.addBlock(newBlock);
+            self.sockets.forEach((s) =>
+              s.send(
+                JSON.stringify({
+                  type: PacketTypes.Block,
+                  height: newBlock.height,
+                  preHash: newBlock.preHash,
+                  timestamp: newBlock.timestamp,
+                  txs: newBlock.txs,
+                  proposer: newBlock.proposer,
+                  stateRoot: newBlock.stateRoot,
+                  votes: newBlock.votes,
+                  signature: newBlock.signature,
+                })
+              )
+            );
+          } catch (e) {
+            console.error(e);
+            break;
+          }
+          break;
+      ...
+      }
+    }
+  }
+}
+```
+
+何をもって合意を得られたかどうかは、POS のチェーンに拠ります。
+今回は`yesの投票がバリデータ数の2/3以上であること`を合意の条件とします。
+
+```javascript
+class Tinychain {
+  tallyVotes(votes) {
+    const rate = votes.filter((v) => v.isYes).length / (this.store.validators().length - 1); // yes投票の割合
+    return 2 / 3 <= rate; // yesが2/3以上であれば合格
+  }
+```
+
+### Step7: ブロックを追加する
+
+最後に、正規のブロックをチェーンに追加します。
+
+```javascript
+class Tinychain {
+  ...
+  addBlock(newBlock) {
+    let isNew = this.latestBlock().height < newBlock.height ? true : false;
+    if (!isNew) return false; // 新規のブロックでない場合はスキップ
+    this.validateBlock(newBlock, true);
+    this.blocks.push(newBlock);
+    this.store.states = StateStore.applyTransactions(this.store.states, newBlock.txs); // stateの更新
+    this.store.applyRewards(newBlock.proposer, newBlock.votes); // リワードの付与
+    this.pool.clear(this.store.states); // ペンディングTxsとStatesのクリア
+    this.votes = []; // 投票のクリア
+    this.pendingBlock = null; // ペンディングBlockのクリア
+    console.log(`> ⛓ new block added! height is ${newBlock.height}`)
+    return true;
+  }
+  ..
+}
+```
+
+この時に、ブロックの生成報酬をプロポーザと、バリデータに分配します。
+プロポーザには３枚の Tinycoin を付与し、バリデータには１枚を付与します。
+
+```javascript
+class StateStore {
+  ...
+  applyRewards(propoer, votes) {
+    // proposerのリワードは”３”
+    this.states[this.states.findIndex((s) => s.key === propoer)].balance += 3;
+    // yesに投票したvoterのリワードは”１”
+    votes
+      .filter((v) => v.isYes)
+      .map((v) => v.voter)
+      .forEach((voter) => {
+        this.states[this.states.findIndex((s) => s.key === voter)].balance += 1;
+      });
+  }
+  ...
+}
+```

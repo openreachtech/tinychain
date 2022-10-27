@@ -22,18 +22,22 @@ class Tinychain {
   addBlock(newBlock) {
     let isNew = this.latestBlock().height < newBlock.height ? true : false;
     if (!isNew) return false; // 新規のブロックでない場合はスキップ
-    this.validateBlock(newBlock);
+    this.validateBlock(newBlock, true);
     this.blocks.push(newBlock);
-    this.store.applyTransactions(newBlock.txs); // stateの更新
+    this.store.states = StateStore.applyTransactions(this.store.states, newBlock.txs); // stateの更新
     this.store.applyRewards(newBlock.proposer, newBlock.votes); // リワードの付与
     this.pool.clear(this.store.states); // ペンディングTxsとStatesのクリア
     this.votes = []; // 投票のクリア
     this.pendingBlock = null; // ペンディングBlockのクリア
+    console.log(`> ⛓ new block added! height is ${newBlock.height}`);
     return true;
   }
 
-  validateBlock(b) {
+  validateBlock(b, isApproved = false) {
     const preBlock = this.latestBlock();
+    const expectedProposer = this.electProposer(this.store.validators(), b.height);
+    const states = StateStore.applyTransactions(this.store.states, b.txs);
+    const expectedStateRoot = StateStore.computeStateRoot(states);
     const expHash = Block.hash(b.height, b.preHash, b.timestamp, b.txs, b.proposer, b.stateRoot, b.votes);
     if (b.height !== preBlock.height + 1) {
       // ブロック高さが直前のブロックの次であるかチェック
@@ -41,49 +45,38 @@ class Tinychain {
     } else if (b.preHash !== preBlock.hash) {
       // 前ブロックハッシュ値が直前のブロックのハッシュ値と一致するかチェック
       throw new Error(`invalid preHash. expected: ${preBlock.hash}`);
-    } else if (b.hash !== expHash) {
-      // ハッシュ値が正しいく計算されているかチェック
-      throw new Error(`invalid hash. expected: ${expHash}`);
-    }
-    Block.validateSig(b); // 署名が正しいかチェック
-    // 2/3以上のyesを集めているかチェック
-    if (!this.tallyVotes(b.votes)) {
-      throw new Error(`insufficient positive votes`);
-    }
-  }
-
-  validateNewBlock(b) {
-    const preBlock = this.latestBlock();
-    const expectedData = TxPool.serializeTxs(this.pool.txs);
-    const expectedProposer = this.electProposer(this.store.validators(), b.height);
-    const expectedStateRoot = StateStore.computeStateRoot(this.pool.pendingStates);
-    if (b.height !== preBlock.height + 1) {
-      // ブロック高さが直前のブロックの次であるかチェック
-      throw new Error(`invalid heigh. expected: ${preBlock.height + 1}`);
-    } else if (b.preHash !== preBlock.hash) {
-      // 前ブロックハッシュ値が直前のブロックのハッシュ値と一致するかチェック
-      throw new Error(`invalid preHash. expected: ${preBlock.hash}`);
-    } else if (TxPool.serializeTxs(b.txs) !== TxPool.serializeTxs(this.pool.txs)) {
-      // Dataの計算結果が一致するかチェック
-      throw new Error(`invalid data. expected: ${expectedData}`);
     } else if (b.proposer !== expectedProposer) {
       // 正しいブロッックプロポーザーかチェック
       throw new Error(`invalid propoer. expected: ${expectedProposer}`);
     } else if (b.stateRoot !== expectedStateRoot) {
       // StateRootの計算結果が一致するかチェック
       throw new Error(`invalid state root. expected: ${expectedStateRoot}`);
+    } else if (b.hash !== expHash) {
+      // ハッシュ値が正しいく計算されているかチェック
+      throw new Error(`invalid hash. expected: ${expHash}`);
+    }
+    Block.validateSig(b); // 署名が正しいかチェック
+    // 承認されたブロックの場合は、2/3以上のyesを集めているかチェック
+    if (isApproved) {
+      if (!this.tallyVotes(b.votes)) {
+        throw new Error(`insufficient positive votes`);
+      }
     }
   }
 
   electProposer(validators, height) {
-    // ブロック高さのハッシュ値の先頭１byteを決定的な乱数として使う
+    // 1. ブロック高さのハッシュ値の先頭１byteを決定的な乱数として使う
     const threshold = Number(`0x${SHA256(height.toString()).toString().slice(0, 2)}`);
+    // 2. Stake量の総和を計算
     const totalStake = validators.reduce((pre, v) => pre + v.stake, 0);
     let sumOfVotingPower = 0;
     return validators.find((v) => {
-      let votingPower = 256 * (v.stake / totalStake); // VotingPowerはstake量によって荷重される
+      // 3. stake量によって荷重されたVotingPowerを計算stake量によって荷重されたVotingPowerを計算
+      //    255で掛けているのは、今回、乱数としてつかった1byteの最大値が255であり、その割合を出すため
+      let votingPower = 255 * (v.stake / totalStake);
       sumOfVotingPower += votingPower;
-      return threshold <= sumOfVotingPower; // VotingPowerがはじめて閾値を超えたバリデータをプロポーザとして選出
+      // 4. 初めてVotingPowerの総和が、ブロック高さから求めた乱数（threshold）を超えた時のバリデータをプロポーザとして選出
+      return threshold <= sumOfVotingPower;
     }).key;
   }
 
@@ -129,7 +122,8 @@ class Tinychain {
     const preBlock = this.latestBlock();
     const propoer = this.wallet.pubKey;
     const stateRoot = StateStore.computeStateRoot(this.pool.pendingStates);
-    return new Block(preBlock.height + 1, preBlock.hash, now(), this.pool.txs, propoer, stateRoot);
+    const b = new Block(preBlock.height + 1, preBlock.hash, now(), this.pool.txs, propoer, stateRoot);
+    return this.wallet.signBlock(b);
   }
 
   isProposer() {
@@ -146,7 +140,7 @@ class Tinychain {
       this.pendingBlock = this.generateBlock();
       broadcastBlock(this.pendingBlock);
       console.log(`proposing ${this.pendingBlock.height} th height of block`);
-    }, 5 * 1000);
+    }, 5 * 1000); // x秒間隔で実行する
   }
 }
 
@@ -205,8 +199,10 @@ class StateStore {
     return this.states.filter((state) => 0 < state.stake); // stakeしていればバリデータとみなす
   }
 
-  applyTransactions(txs) {
-    txs.forEach((tx) => (this.states = StateStore.applyTransaction(this.states, tx)));
+  static applyTransactions(states, txs) {
+    let copyStates = states.map((s) => new State(s.key, s.balance, s.stake));
+    txs.forEach((tx) => (copyStates = StateStore.applyTransaction(copyStates, tx)));
+    return copyStates;
   }
 
   applyRewards(propoer, votes) {

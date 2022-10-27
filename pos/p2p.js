@@ -155,7 +155,16 @@ class P2P {
         // プロポーズブロックを受信した場合は、検証して正しい場合はYesに、不正の場合はNoに投票する
         case PacketTypes.PBlock: {
           const txs = packet.txs.map((t) => new Transaction(t.from, t.to, Number(t.amount), t.signature));
-          const b = new Block(packet.height, packet.preHash, packet.timestamp, txs, packet.proposer, packet.stateRoot);
+          const b = new Block(
+            packet.height,
+            packet.preHash,
+            packet.timestamp,
+            txs,
+            packet.proposer,
+            packet.stateRoot,
+            packet.votes,
+            packet.signature
+          );
           // プロポーザーなら投票には参加しない
           if (self.chain.isProposer()) break;
           // 既に同じブロックに投票済みならスキップ
@@ -169,7 +178,7 @@ class P2P {
           // 正しいブロックなら yes に 不正なブロックなら no に投票
           let isYes;
           try {
-            self.chain.validateNewBlock(b);
+            self.chain.validateBlock(b);
             isYes = true; // validなブロックの場合は、yes vote
           } catch (e) {
             console.log(e);
