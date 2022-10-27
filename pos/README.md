@@ -31,7 +31,7 @@ POS はブロックを積み上げるまでに`投票して合意を得る`こ�
 ## 通信プロトコルについて
 
 Tinychain の Node は２つの通信プロトコルを使用しています。
-一方は、同じみ、Wallet との通信用の JSON な HTTP です。前回と同じです。
+一方は、前回と同じくWallet との通信用の JSON な HTTP です。
 もう一方は、P2P 通信用の Websocket です。P2P 通信について詳しく解説します。
 
 ![networking](./img/networking.png)
@@ -82,7 +82,7 @@ class StateStore {
 - Step3: Transaction Pool へ Transaction を追加する
 - Step4: Block を Transaction Pool 内のトランザクションから作る
 - Step5: 投票
-- Step6: 投票を集計して、正規のブロックを作る
+- Step6: 投票を集計して正規のブロックを作る
 - Step7: ブロックを追加する
 
 ### Step1: Wallet を作る
@@ -165,7 +165,7 @@ class StateStore {
 }
 ```
 
-これはトランザクションの検証時に、送金金額がペンディング状態の残高以下であることを確認するためです。
+これはトランザクションの検証時に、送金額がペンディング状態の残高以下であることを確認するためです。
 
 ```javascript
 static validateTx(tx, states) {
@@ -181,7 +181,7 @@ static validateTx(tx, states) {
 ### Step4: Block を Transaction Pool 内のトランザクションから作る
 
 Tinychain を立ち上げると、この部分が 10 秒間隔で定期実行されます。
-自身がが次のブロック高さのブロックプロポーザである場合、Tx プールのトランザクションをまとめて、ブロックを作り、ブロードキャストします。
+自身が次のブロック高さのブロックプロポーザである場合、Tx プールのトランザクションをまとめて、ブロックを作り、ブロードキャストします。
 
 ```javascript
 class Tinychain {
@@ -201,7 +201,7 @@ class Tinychain {
 
 プロポーザの選出は、ブロック高さから決定的に決まります。
 
-1. まず、ブロック高さのハッシュ値の先頭１ byte（``0x${SHA256(height.toString()).toString().slice(0, 2)`）を計算します
+1. まず、ブロック高さのハッシュ値の先頭 1byte（`0x${SHA256(height.toString()).toString().slice(0, 2)`）を計算します
 2. 次に、stake 量の総和を計算します
 3. そして、stake 量によって荷重された VotingPower を計算します。255 で掛けているのは、今回、乱数としてつかった 1byte の最大値が 255 であり、その割合を出すためです。
 4. バリデータをイテレートするなかで、初めて VotingPower の総和が、ブロック高さから求めた乱数（threshold）を超えた時のバリデータをプロポーザとして選出します
@@ -228,8 +228,8 @@ class Tinychain {
 }
 ```
 
-- Step5: 投票
-  プロポーズされたブロックを受信したら、検証して正しい場合は Yes に、不正の場合は No に投票する
+### Step5: 投票
+プロポーズされたブロックを受信したら、検証して正しい場合は Yes に、不正の場合は No に投票します。
 
 ```javascript
 class P2P {
@@ -340,7 +340,7 @@ class StateStore {
 }
 ```
 
-### Step6: 投票を集計して、正規のブロックを作る
+### Step6: 投票を集計して正規のブロックを作る
 
 自信がブロックプロポーザであり、受信した投票が規定の数に達したら、集計して、賛同を得られた場合は、正規のブロックを作り、ブロードキャストします。
 
@@ -405,7 +405,7 @@ class P2P {
 }
 ```
 
-何をもって合意を得られたかどうかは、POS のチェーンに拠ります。
+何をもって合意を得られたと定義するかはPOS のチェーンに拠ります。
 今回は`yesの投票がバリデータ数の2/3以上であること`を合意の条件とします。
 
 ```javascript
@@ -440,7 +440,7 @@ class Tinychain {
 }
 ```
 
-この時に、ブロックの生成報酬をプロポーザと、バリデータに分配します。
+この時に、ブロックの生成報酬を分配します。
 プロポーザには３枚の Tinycoin を付与し、バリデータには１枚を付与します。
 
 ```javascript
@@ -459,4 +459,34 @@ class StateStore {
   }
   ...
 }
+```
+
+## 動作確認
+チェーンを立ち上げて動作確認をします。
+まずは、３台のNodeを立ち上げます。ブロックを積み上げるには2/3以上の承認が必要なので、自分以外の２人の承認が必要です。１人でも承認が取れないと、ブロックを積み上げることができません。
+
+```sh
+# start alice's node
+node server.js chain --wallet ./wallet/privkey-alice -p 3001 --p2p-port 5001
+# start bob's node
+node server.js chain --wallet ./wallet/privkey-bob -p 3002 --p2p-port 5002 --p2p-endpoints ws://127.0.0.1:5001
+# start tom's node
+node server.js chain --wallet ./wallet/privkey-tom -p 3003 --p2p-port 5003 --p2p-endpoints ws://127.0.0.1:5001
+```
+
+Aliceの残高を確認してみます。ブロックが積み上がる毎に、増えるのがわかります。
+```sh
+# balance of alice
+node client.js balance -p 3001 0463f71fdd303538611a58bae6963ca358d17e56c1990d9456f553d90ad774ebb2c0be5ac43be6e4decc51a3a2cb2d4305aa1524ff55a69f78dfa7459189f3af6b
+```
+
+Aliceからコインを送金してみます。
+ブロックが積み上がったら、残高が１になっていることが確認できます。
+```sh
+# transfer coin
+node client.js transfer -w ./wallet/privkey-alice -p 3001 -a 1 04a4311e7c68d6bb1be8a6db813cacec2b4e357c3289b113b3530f92fd1045b2b03d94dc8066671a5215e4abb5f1dcbd786ea73a25f67bf64bad68e493db551473
+
+# confirm balance
+node client.js balance -p 3001 04a4311e7c68d6bb1be8a6db813cacec2b4e357c3289b113b3530f92fd1045b2b03d94dc8066671a5215e4abb5f1dcbd786ea73a25f67bf64bad68e493db551473
+{ balance: 1 }
 ```
