@@ -17,6 +17,8 @@
   },
   "homepage": "https://github.com/openreachtech/tinychain#readme",
   "dependencies": {
+    "@ethereumjs/common": "^3.0.1",
+    "@ethereumjs/evm": "^1.2.2",
     "axios": "^1.1.2",
     "body-parser": "^1.20.1",
     "commander": "^9.4.1",

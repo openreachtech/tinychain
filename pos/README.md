@@ -31,7 +31,7 @@ POS はブロックを積み上げるまでに`投票して合意を得る`こ�
 ## 通信プロトコルについて
 
 Tinychain の Node は２つの通信プロトコルを使用しています。
-一方は、前回と同じくWallet との通信用の JSON な HTTP です。
+一方は、前回と同じく Wallet との通信用の JSON な HTTP です。
 もう一方は、P2P 通信用の Websocket です。P2P 通信について詳しく解説します。
 
 ![networking](./img/networking.png)
@@ -229,6 +229,7 @@ class Tinychain {
 ```
 
 ### Step5: 投票
+
 プロポーズされたブロックを受信したら、検証して正しい場合は Yes に、不正の場合は No に投票します。
 
 ```javascript
@@ -405,7 +406,7 @@ class P2P {
 }
 ```
 
-何をもって合意を得られたと定義するかはPOS のチェーンに拠ります。
+何をもって合意を得られたと定義するかは POS のチェーンに拠ります。
 今回は`yesの投票がバリデータ数の2/3以上であること`を合意の条件とします。
 
 ```javascript
@@ -462,8 +463,9 @@ class StateStore {
 ```
 
 ## 動作確認
+
 チェーンを立ち上げて動作確認をします。
-まずは、３台のNodeを立ち上げます。ブロックを積み上げるには2/3以上の承認が必要なので、自分以外の２人の承認が必要です。１人でも承認が取れないと、ブロックを積み上げることができません。
+まずは、３台の Node を立ち上げます。ブロックを積み上げるには 2/3 以上の承認が必要なので、自分以外の２人の承認が必要です。１人でも承認が取れないと、ブロックを積み上げることができません。
 
 ```sh
 # start alice's node
@@ -474,14 +476,16 @@ node server.js chain --wallet ./wallet/privkey-bob -p 3002 --p2p-port 5002 --p2p
 node server.js chain --wallet ./wallet/privkey-tom -p 3003 --p2p-port 5003 --p2p-endpoints ws://127.0.0.1:5001
 ```
 
-Aliceの残高を確認してみます。ブロックが積み上がる毎に、増えるのがわかります。
+Alice の残高を確認してみます。ブロックが積み上がる毎に、増えるのがわかります。
+
 ```sh
 # balance of alice
 node client.js balance -p 3001 0463f71fdd303538611a58bae6963ca358d17e56c1990d9456f553d90ad774ebb2c0be5ac43be6e4decc51a3a2cb2d4305aa1524ff55a69f78dfa7459189f3af6b
 ```
 
-Aliceからコインを送金してみます。
+Alice からコインを送金してみます。
 ブロックが積み上がったら、残高が１になっていることが確認できます。
+
 ```sh
 # transfer coin
 node client.js transfer -w ./wallet/privkey-alice -p 3001 -a 1 04a4311e7c68d6bb1be8a6db813cacec2b4e357c3289b113b3530f92fd1045b2b03d94dc8066671a5215e4abb5f1dcbd786ea73a25f67bf64bad68e493db551473
