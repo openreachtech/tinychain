@@ -3,105 +3,9 @@
 const { Chain, Common, Hardfork } = require("@ethereumjs/common");
 const { EVM: ETHEVM } = require("@ethereumjs/evm");
 const SHA256 = require("crypto-js/sha256");
-const { Account, KECCAK256_NULL_S } = require("@ethereumjs/util");
-
-const emptySlot = "0000000000000000000000000000000000000000000000000000000000000000";
-
-class KV {
-  constructor(key, value) {
-    this.key = key;
-    this.value = value;
-  }
-}
-
-class KVStore {
-  constructor(kvs = []) {
-    this.kvs = kvs;
-  }
-  print() {
-    this.kvs.forEach((kv) => console.log(kv));
-  }
-
-  get(key) {
-    return this.kvs.find((kv) => kv.key === key);
-  }
-
-  set(key, value) {
-    const newKV = new KV(key, value);
-    const i = this.kvs.findIndex((kv) => kv.key === key);
-    if (i < 0) {
-      this.kvs.push(newKV);
-    } else {
-      this.kvs[i] = newKV;
-    }
-  }
-
-  update(oldKey, newKey, value) {
-    const newKV = new KV(newKey, value);
-    const i = this.kvs.findIndex((kv) => kv.key === oldKey);
-    if (i < 0) {
-      this.kvs.push(newKV);
-    } else {
-      this.kvs[i] = newKV;
-    }
-  }
-}
-
-class AccountState {
-  constructor(addressKey, nonce = 0, balance, stake = 0, storageRoot = emptySlot, codeHash = KECCAK256_NULL_S) {
-    this.key = addressKey; // walletのpubkeyをkeyとして使う
-    this.nonce = nonce;
-    this.balance = balance;
-    this.stake = stake; // stakeは簡略化のためGenesisStateからのみ設定する
-    this.storageRoot = storageRoot;
-    this.codeHash = codeHash;
-  }
-
-  static codeHash(code) {
-    return SHA256(`${code}`).toString();
-  }
-}
-
-class StateStore {
-  constructor(store) {
-    this.store = store;
-  }
-
-  decodeAccountState(kv) {
-    if (kv.value === emptySlot) return new AccountState("0x" + kv.key, 0, 0, 0);
-    const a = JSON.parse(kv.value);
-    return new AccountState(a.key, a.nonce, a.balance, a.stake, a.storageRoot, a.codeHash);
-  }
-
-  encodeAccountState(state) {
-    return JSON.stringify(state);
-  }
-
-  accountState(addressKey) {
-    const kv = this.store.get(addressKey);
-    if (!kv) return new AccountState(addressKey, 0, 0, 0);
-    return this.decodeAccountState(kv);
-  }
-
-  setAccountState(addressKey, state) {
-    this.store.set(addressKey, this.encodeAccountState(state));
-  }
-
-  updateBalance(addressKey, amount) {
-    let state = this.accountState(addressKey);
-    if (!state) throw new Error(`failed to reduce balance. not account found by ${addressKey}`);
-    state.balance += amount;
-    if (state.balance < 0) throw new Error(`balance of ${addressKey} is negative`);
-    this.setAccountState(addressKey, state);
-  }
-
-  incrementNonce(addressKey) {
-    let state = this.accountState(addressKey);
-    if (!state) throw new Error(`failed to increment nonce. not account found by ${addressKey}`);
-    state.nonce++;
-    this.setAccountState(addressKey, state);
-  }
-}
+const { Account } = require("@ethereumjs/util");
+const { AccountState } = require("./blockchain");
+const { emptySlot } = require("./utils");
 
 class EVM {
   constructor(statestore) {
@@ -263,4 +167,4 @@ class StateManager {
   }
 }
 
-module.exports = { emptySlot, KV, KVStore, AccountState, StateStore, StateManager, EVM };
+module.exports = { emptySlot, StateManager, EVM };

@@ -1,9 +1,8 @@
 "use strict";
 
 const SHA256 = require("crypto-js/sha256");
-const { ec } = require("elliptic");
-const EC = new ec("secp256k1");
-const { now, toHexString } = require("./utils");
+const { KECCAK256_NULL_S } = require("@ethereumjs/util");
+const { now, toHexString, emptySlot, EC } = require("./utils");
 
 class Tinychain {
   constructor(wallet, genesisStates) {
@@ -168,73 +167,169 @@ class Block {
   }
 }
 
-class State {
-  constructor(addr, amount, stake = 0) {
-    this.key = addr; // walletのpubkeyをkeyとして使う
-    this.balance = amount;
+class KV {
+  constructor(key, value) {
+    this.key = key;
+    this.value = value;
+  }
+}
+
+class KVStore {
+  constructor(kvs = []) {
+    this.kvs = kvs;
+  }
+  print() {
+    this.kvs.forEach((kv) => console.log(kv));
+  }
+
+  get(key) {
+    return this.kvs.find((kv) => kv.key === key);
+  }
+
+  set(key, value) {
+    const newKV = new KV(key, value);
+    const i = this.kvs.findIndex((kv) => kv.key === key);
+    if (i < 0) {
+      this.kvs.push(newKV);
+    } else {
+      this.kvs[i] = newKV;
+    }
+  }
+
+  update(oldKey, newKey, value) {
+    const newKV = new KV(newKey, value);
+    const i = this.kvs.findIndex((kv) => kv.key === oldKey);
+    if (i < 0) {
+      this.kvs.push(newKV);
+    } else {
+      this.kvs[i] = newKV;
+    }
+  }
+}
+
+class AccountState {
+  constructor(addressKey, nonce = 0, balance, stake = 0, storageRoot = emptySlot, codeHash = KECCAK256_NULL_S) {
+    this.key = addressKey; // walletのpubkeyをkeyとして使う
+    this.nonce = nonce;
+    this.balance = balance;
     this.stake = stake; // stakeは簡略化のためGenesisStateからのみ設定する
+    this.storageRoot = storageRoot;
+    this.codeHash = codeHash;
   }
 
-  toString() {
-    return JSON.stringify(this);
-  }
-
-  updateBalance(amount) {
-    this.balance += amount;
-    if (this.balance < 0) throw new Error(`ballance of ${this.key} is negative`);
+  static codeHash(code) {
+    return SHA256(`${code}`).toString();
   }
 }
 
 class StateStore {
-  constructor(states = []) {
-    this.states = states; // stateを配列の形で保持する
+  constructor(store) {
+    this.store = store;
   }
 
-  balanceOf(addr) {
-    const state = this.states.find((state) => state.key === addr);
-    return state ? state.balance : 0;
+  decodeAccountState(kv) {
+    if (kv.value === emptySlot) return new AccountState("0x" + kv.key, 0, 0, 0);
+    const a = JSON.parse(kv.value);
+    return new AccountState(a.key, a.nonce, a.balance, a.stake, a.storageRoot, a.codeHash);
   }
 
-  validators() {
-    return this.states.filter((state) => 0 < state.stake); // stakeしていればバリデータとみなす
+  encodeAccountState(state) {
+    return JSON.stringify(state);
   }
 
-  static applyTransactions(states, txs) {
-    let copyStates = states.map((s) => new State(s.key, s.balance, s.stake));
-    txs.forEach((tx) => (copyStates = StateStore.applyTransaction(copyStates, tx)));
-    return copyStates;
+  accountState(addressKey) {
+    const kv = this.store.get(addressKey);
+    if (!kv) return new AccountState(addressKey, 0, 0, 0);
+    return this.decodeAccountState(kv);
   }
 
-  applyRewards(propoer, votes) {
-    this.states[this.states.findIndex((s) => s.key === propoer)].balance += 3; // proposerのリワードは”３”
-    votes
-      .filter((v) => v.isYes)
-      .map((v) => v.voter)
-      .forEach((voter) => {
-        this.states[this.states.findIndex((s) => s.key === voter)].balance += 1; // yesに投票したvoterのリワードは”１”
-      });
+  setAccountState(addressKey, state) {
+    this.store.set(addressKey, this.encodeAccountState(state));
   }
 
-  static applyTransaction(states, tx) {
-    // fromのバランスを更新
-    const fromIndex = states.findIndex((state) => state.key === tx.from);
-    if (fromIndex < 0) throw new Error(`no state found by key(=${tx.from})`);
-    states[fromIndex].updateBalance(-tx.amount);
-    // toのバランスを更新
-    const toIndex = states.findIndex((state) => state.key === tx.to);
-    if (toIndex < 0) {
-      states.push(new State(tx.to, tx.amount)); // stateを新規追加
-    } else {
-      states[toIndex].updateBalance(tx.amount); // stateを更新
-    }
-    return states;
+  updateBalance(addressKey, amount) {
+    let state = this.accountState(addressKey);
+    if (!state) throw new Error(`failed to reduce balance. not account found by ${addressKey}`);
+    state.balance += amount;
+    if (state.balance < 0) throw new Error(`balance of ${addressKey} is negative`);
+    this.setAccountState(addressKey, state);
   }
 
-  static computeStateRoot(states) {
-    // StateRootは「全statesを文字列にして繋げたもののhash値」とする
-    return SHA256(states.reduce((pre, state) => pre + state.toString(), "")).toString();
+  incrementNonce(addressKey) {
+    let state = this.accountState(addressKey);
+    if (!state) throw new Error(`failed to increment nonce. not account found by ${addressKey}`);
+    state.nonce++;
+    this.setAccountState(addressKey, state);
   }
 }
+
+// class State {
+//   constructor(addr, amount, stake = 0) {
+//     this.key = addr; // walletのpubkeyをkeyとして使う
+//     this.balance = amount;
+//     this.stake = stake; // stakeは簡略化のためGenesisStateからのみ設定する
+//   }
+
+//   toString() {
+//     return JSON.stringify(this);
+//   }
+
+//   updateBalance(amount) {
+//     this.balance += amount;
+//     if (this.balance < 0) throw new Error(`ballance of ${this.key} is negative`);
+//   }
+// }
+
+// class StateStore {
+//   constructor(states = []) {
+//     this.states = states; // stateを配列の形で保持する
+//   }
+
+//   balanceOf(addr) {
+//     const state = this.states.find((state) => state.key === addr);
+//     return state ? state.balance : 0;
+//   }
+
+//   validators() {
+//     return this.states.filter((state) => 0 < state.stake); // stakeしていればバリデータとみなす
+//   }
+
+//   static applyTransactions(states, txs) {
+//     let copyStates = states.map((s) => new State(s.key, s.balance, s.stake));
+//     txs.forEach((tx) => (copyStates = StateStore.applyTransaction(copyStates, tx)));
+//     return copyStates;
+//   }
+
+//   applyRewards(propoer, votes) {
+//     this.states[this.states.findIndex((s) => s.key === propoer)].balance += 3; // proposerのリワードは”３”
+//     votes
+//       .filter((v) => v.isYes)
+//       .map((v) => v.voter)
+//       .forEach((voter) => {
+//         this.states[this.states.findIndex((s) => s.key === voter)].balance += 1; // yesに投票したvoterのリワードは”１”
+//       });
+//   }
+
+//   static applyTransaction(states, tx) {
+//     // fromのバランスを更新
+//     const fromIndex = states.findIndex((state) => state.key === tx.from);
+//     if (fromIndex < 0) throw new Error(`no state found by key(=${tx.from})`);
+//     states[fromIndex].updateBalance(-tx.amount);
+//     // toのバランスを更新
+//     const toIndex = states.findIndex((state) => state.key === tx.to);
+//     if (toIndex < 0) {
+//       states.push(new State(tx.to, tx.amount)); // stateを新規追加
+//     } else {
+//       states[toIndex].updateBalance(tx.amount); // stateを更新
+//     }
+//     return states;
+//   }
+
+//   static computeStateRoot(states) {
+//     // StateRootは「全statesを文字列にして繋げたもののhash値」とする
+//     return SHA256(states.reduce((pre, state) => pre + state.toString(), "")).toString();
+//   }
+// }
 
 class Transaction {
   constructor(from, to, amount, sig = "") {
@@ -344,4 +439,4 @@ class Wallet {
   }
 }
 
-module.exports = { Block, Tinychain, Transaction, Wallet, State, Vote };
+module.exports = { Block, Tinychain, Transaction, Wallet, Vote, KV, KVStore, AccountState, StateStore };

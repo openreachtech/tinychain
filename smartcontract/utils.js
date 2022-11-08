@@ -6,6 +6,8 @@ const { defaultAbiCoder: AbiCoder, Interface } = require("@ethersproject/abi");
 const Solc = require("solc");
 const EC = new ec("secp256k1");
 
+const emptySlot = "0000000000000000000000000000000000000000000000000000000000000000";
+
 const now = () => Math.floor(new Date().getTime() / 1000);
 
 const toHexString = (bytes) => {
@@ -79,4 +81,4 @@ const compileContract = (dir, file) => {
   return output.contracts[file][file.slice(0, -4)].evm.bytecode.object;
 };
 
-module.exports = { toHexString, now, readWallet, encodeDeployment, encodeFunction, compileContract };
+module.exports = { emptySlot, EC, toHexString, now, readWallet, encodeDeployment, encodeFunction, compileContract };
