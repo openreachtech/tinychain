@@ -1,10 +1,11 @@
 "use strict";
 
+const { Chain, Common, Hardfork } = require("@ethereumjs/common");
+const { EVM: ETHEVM } = require("@ethereumjs/evm");
 const SHA256 = require("crypto-js/sha256");
 const { Account, KECCAK256_NULL_S } = require("@ethereumjs/util");
 
 const emptySlot = "0000000000000000000000000000000000000000000000000000000000000000";
-
 
 class KV {
   constructor(key, value) {
@@ -102,14 +103,27 @@ class StateStore {
   }
 }
 
-class CustumEEI {
+class EVM {
+  constructor(statestore) {
+    this.evm = new ETHEVM({
+      common: new Common({ chain: Chain.Mainnet, hardfork: Hardfork.London }),
+      eei: new StateManager(statestore),
+    });
+  }
+
+  async runCall(opts) {
+    return await this.evm.runCall(opts);
+  }
+}
+
+class StateManager {
   constructor(statestore) {
     this.statestore = statestore;
     this._modifies = [];
   }
 
   async getAccount(address) {
-    const state = this.statestore.accountState(CustumEEI.key(address));
+    const state = this.statestore.accountState(StateManager.key(address));
     return new Account(
       BigInt(state.nonce),
       BigInt(state.balance),
@@ -125,7 +139,7 @@ class CustumEEI {
   }
 
   async putAccount(address, account) {
-    const addressKey = CustumEEI.key(address);
+    const addressKey = StateManager.key(address);
     const state = this.getAccount(address);
     const newState = new AccountState(
       addressKey,
@@ -139,7 +153,7 @@ class CustumEEI {
   }
 
   storageKey(address, key) {
-    return SHA256(`${CustumEEI.key(address)}|${key.toString("hex")}`).toString();
+    return SHA256(`${StateManager.key(address)}|${key.toString("hex")}`).toString();
   }
 
   isWarmedStorage(address, slot) {
@@ -158,7 +172,7 @@ class CustumEEI {
 
   addWarmedAddress(address) {
     // アカウントに対応するKVを初期化
-    this.statestore.store.set(CustumEEI.key(address), emptySlot);
+    this.statestore.store.set(StateManager.key(address), emptySlot);
   }
 
   async checkpoint() {}
@@ -166,14 +180,14 @@ class CustumEEI {
   async commit() {}
 
   async clearContractStorage(address) {
-    console.log(`clear storage of ${CustumEEI.key(address)}`);
+    console.log(`clear storage of ${StateManager.key(address)}`);
     this._modifies = [];
   }
 
   async _modifyContractStorage(address) {
-    // const i = this.statestore.store.kvs.findIndex((kv) => kv.key === CustumEEI.key(address));
+    // const i = this.statestore.store.kvs.findIndex((kv) => kv.key === StateManager.key(address));
     // if (i < 0) throw new Error(`no account found while clearing contract storage`)
-    const addressKey = CustumEEI.key(address);
+    const addressKey = StateManager.key(address);
     // const account = await this.getAccount(address);
     const state = this.statestore.accountState(addressKey);
     const root = state.storageRoot;
@@ -184,7 +198,7 @@ class CustumEEI {
       const kv = this.statestore.store.get(root);
       keys.push(...kv.value.split("|"));
       this._modifies.forEach((k) => {
-        if (keys.find(key => key === k)) return;
+        if (keys.find((key) => key === k)) return;
         this.keys.push(k);
       });
     }
@@ -224,7 +238,7 @@ class CustumEEI {
   }
 
   async putContractCode(address, value) {
-    const addressKey = CustumEEI.key(address);
+    const addressKey = StateManager.key(address);
     const codeHash = AccountState.codeHash(value.toString("hex"));
     const kv = this.statestore.store.get(addressKey);
     let state;
@@ -241,7 +255,7 @@ class CustumEEI {
   }
 
   async getContractCode(address) {
-    const addressKey = CustumEEI.key(address);
+    const addressKey = StateManager.key(address);
     const state = this.statestore.accountState(addressKey);
     const kv = this.statestore.store.get(state.codeHash);
     if (!kv) throw new Error(`not code found by ${state.codeHash}`);
@@ -249,4 +263,4 @@ class CustumEEI {
   }
 }
 
-module.exports = { emptySlot, KV, KVStore, AccountState, StateStore, CustumEEI };
+module.exports = { emptySlot, KV, KVStore, AccountState, StateStore, StateManager, EVM };

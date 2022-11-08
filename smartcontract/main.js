@@ -1,12 +1,9 @@
 "use strict";
 
-const { readFileSync } = require("fs");
-const { EVM } = require("@ethereumjs/evm");
-const { Chain, Common, Hardfork } = require("@ethereumjs/common");
 const { defaultAbiCoder: AbiCoder, Interface } = require("@ethersproject/abi");
-const { Address, generateAddress, bigIntToBuffer } = require("@ethereumjs/util");
-const solc = require("solc");
-const { KVStore, AccountState, StateStore, CustumEEI } = require("./evm");
+const { Address } = require("@ethereumjs/util");
+const { KVStore, AccountState, StateStore, StateManager, EVM } = require("./evm");
+const { encodeDeployment, encodeFunction, compileContract } = require("./utils");
 
 // const getAddressKey = (address) => {
 //   const addressKey = address.toString("hex");
@@ -17,73 +14,12 @@ const { KVStore, AccountState, StateStore, CustumEEI } = require("./evm");
 const INITIAL_GREETING = "Hello, World!";
 const SECOND_GREETING = "Hola, Mundo!";
 
-const encodeDeployment = (bytecode, params) => {
-  const deploymentData = bytecode;
-  if (params) {
-    const argumentsEncoded = AbiCoder.encode(params.types, params.values);
-    return deploymentData + argumentsEncoded.slice(2);
-  }
-  return deploymentData;
-};
-
-const encodeFunction = (method, params) => {
-  const parameters = params.types ?? []
-  const methodWithParameters = `function ${method}(${parameters.join(',')})`
-  const signatureHash = new Interface([methodWithParameters]).getSighash(method)
-  const encodedArgs = AbiCoder.encode(parameters, params.values ?? [])
-  return signatureHash + encodedArgs.slice(2)
-}
-
-const compileContract = (dir, file) => {
-  const input = {
-    language: "Solidity",
-    sources: {
-      "Greeter.sol": {
-        content: readFileSync(`${dir}/${file}`, "utf8"),
-      },
-    },
-    settings: {
-      optimizer: {
-        enabled: true,
-        runs: 200,
-      },
-      evmVersion: "petersburg",
-      outputSelection: {
-        "*": {
-          "*": ["abi", "evm.bytecode"],
-        },
-      },
-    },
-  };
-  const output = JSON.parse(solc.compile(JSON.stringify(input)));
-
-  let compilationFailed = false;
-
-  if (output.errors) {
-    for (const error of output.errors) {
-      if (error.severity === "error") {
-        console.error(error.formattedMessage);
-        compilationFailed = true;
-      } else {
-        console.warn(error.formattedMessage);
-      }
-    }
-  }
-
-  if (compilationFailed) {
-    return undefined;
-  }
-
-  console.log()
-  return output.contracts[file][file.slice(0,-4)].evm.bytecode.object;
-}
-
 async function main() {
   /* -----------------------------
     Deploy
    ----------------------------- */
-  const bytecode = compileContract("./smartcontract", "Greeter.sol")
-  
+  const bytecode = compileContract("./smartcontract", "Greeter.sol");
+
   const calldata = encodeDeployment(bytecode, {
     types: ["string"],
     values: [INITIAL_GREETING],
@@ -96,14 +32,12 @@ async function main() {
 
   const kvstore = new KVStore();
   const statestore = new StateStore(kvstore);
-  statestore.setAccountState(CustumEEI.key(accountAddress), new AccountState(accountAddress.toString("hex"), 0, 1000000, 0));
-  const eei = new CustumEEI(statestore);
+  statestore.setAccountState(
+    StateManager.key(accountAddress),
+    new AccountState(accountAddress.toString("hex"), 0, 1000000, 0)
+  );
 
-  const common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.London });
-  const evm = new EVM({
-    common,
-    eei,
-  });
+  const evm = new EVM(statestore);
 
   let result = await evm.runCall({
     data,
@@ -113,54 +47,54 @@ async function main() {
     isStatic: false,
   });
 
-  const contractAddress = result.createdAddress
+  const contractAddress = result.createdAddress;
 
-  statestore.updateBalance(CustumEEI.key(accountAddress), -Number(result.execResult.executionGasUsed));
-  statestore.incrementNonce(CustumEEI.key(accountAddress));
+  statestore.updateBalance(StateManager.key(accountAddress), -Number(result.execResult.executionGasUsed));
+  statestore.incrementNonce(StateManager.key(accountAddress));
 
   statestore.store.print();
 
   /* -----------------------------
     Get
    ----------------------------- */
-  const sigHash = new Interface(['function greet()']).getSighash('greet')
+  const sigHash = new Interface(["function greet()"]).getSighash("greet");
   result = await evm.runCall({
     to: contractAddress,
     caller: accountAddress,
-    data: Buffer.from(sigHash.slice(2), 'hex'),
-  })
+    data: Buffer.from(sigHash.slice(2), "hex"),
+  });
 
-  let greeting = AbiCoder.decode(['string'], result.execResult.returnValue)
-  console.log(greeting)
+  let greeting = AbiCoder.decode(["string"], result.execResult.returnValue);
+  console.log(greeting);
 
   /* -----------------------------
     Set
    ----------------------------- */
-   const setcalldata = encodeFunction('setGreeting', {
-    types: ['string'],
+  const setcalldata = encodeFunction("setGreeting", {
+    types: ["string"],
     values: [SECOND_GREETING],
-  })
+  });
 
   await evm.runCall({
     to: contractAddress,
     caller: accountAddress,
-    data: Buffer.from(setcalldata.slice(2), 'hex'),
-  })
+    data: Buffer.from(setcalldata.slice(2), "hex"),
+  });
 
   result = await evm.runCall({
     to: contractAddress,
     caller: accountAddress,
-    data: Buffer.from(sigHash.slice(2), 'hex'),
-  })
+    data: Buffer.from(sigHash.slice(2), "hex"),
+  });
 
-  greeting = AbiCoder.decode(['string'], result.execResult.returnValue)
-  console.log(greeting)
+  greeting = AbiCoder.decode(["string"], result.execResult.returnValue);
+  console.log(greeting);
 
   // statestore.store.print();
 }
 
-const generateContractAddress = (address, account) => {
-  return new Address(generateAddress(address.buf, bigIntToBuffer(account.nonce)));
-};
+// const generateContractAddress = (address, account) => {
+//   return new Address(generateAddress(address.buf, bigIntToBuffer(account.nonce)));
+// };
 
 main();
