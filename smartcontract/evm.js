@@ -1,10 +1,10 @@
 "use strict";
 
 const { Chain, Common, Hardfork } = require("@ethereumjs/common");
+const { KECCAK256_NULL_S } = require("@ethereumjs/util");
 const { EVM: ETHEVM } = require("@ethereumjs/evm");
 const SHA256 = require("crypto-js/sha256");
 const { Account } = require("@ethereumjs/util");
-const { AccountState } = require("./blockchain");
 const { emptySlot } = require("./utils");
 
 class EVM {
@@ -17,6 +17,22 @@ class EVM {
 
   async runCall(opts) {
     return await this.evm.runCall(opts);
+  }
+}
+
+class AccountState {
+  constructor(address, nonce = 0, balance, stake = 0, storageRoot = emptySlot, codeHash = KECCAK256_NULL_S) {
+    const addressKey = StateManager.key(address);
+    this.key = addressKey; // addressをkeyとして使う
+    this.nonce = nonce;
+    this.balance = balance;
+    this.stake = stake; // stakeは簡略化のためGenesisStateからのみ設定する
+    this.storageRoot = storageRoot;
+    this.codeHash = codeHash;
+  }
+
+  static codeHash(code) {
+    return SHA256(`${code}`).toString();
   }
 }
 
@@ -167,4 +183,4 @@ class StateManager {
   }
 }
 
-module.exports = { StateManager, EVM };
+module.exports = { StateManager, AccountState, EVM };

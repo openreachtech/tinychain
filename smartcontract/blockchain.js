@@ -1,20 +1,25 @@
 "use strict";
 
 const SHA256 = require("crypto-js/sha256");
-const { KECCAK256_NULL_S } = require("@ethereumjs/util");
+
 const { now, toHexString, emptySlot, EC } = require("./utils");
+const { StateManager, AccountState } = require("./evm");
 
 class Tinychain {
   constructor(wallet, genesisStates) {
     this.wallet = wallet ? wallet : new Wallet(); // Rewardを受け取るウォレット
+    this.kvstore = new KVStore(); // key-valueストア
+    this.statestore = new StateStore(this.kvstore);
+    // genesis statesを反映
+    for (const state of genesisStates) {
+      this.statestore.setAccountState(StateManager.key(state.key), state);
+    }
+
     this.pool = new TxPool(genesisStates);
     // this.store = new StateStore(genesisStates);
     this.blocks = [new Block(0, "", 0, [], "", StateStore.computeStateRoot(this.store.states), [])];
     this.votes = [];
     this.pendingBlock = null;
-
-    this.kvstore = new KVStore(); // key-valueストア
-    this.statestore = new StateStore(this.kvstore);
   }
 
   latestBlock() {
@@ -207,21 +212,6 @@ class KVStore {
     } else {
       this.kvs[i] = newKV;
     }
-  }
-}
-
-class AccountState {
-  constructor(addressKey, nonce = 0, balance, stake = 0, storageRoot = emptySlot, codeHash = KECCAK256_NULL_S) {
-    this.key = addressKey; // walletのpubkeyをkeyとして使う
-    this.nonce = nonce;
-    this.balance = balance;
-    this.stake = stake; // stakeは簡略化のためGenesisStateからのみ設定する
-    this.storageRoot = storageRoot;
-    this.codeHash = codeHash;
-  }
-
-  static codeHash(code) {
-    return SHA256(`${code}`).toString();
   }
 }
 
@@ -454,4 +444,4 @@ class Wallet {
   }
 }
 
-module.exports = { Block, Tinychain, Transaction, Wallet, Vote, KV, KVStore, AccountState, StateStore };
+module.exports = { Block, Tinychain, Transaction, Wallet, Vote, KV, KVStore, StateStore };

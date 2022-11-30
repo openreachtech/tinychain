@@ -2,8 +2,8 @@
 
 const { defaultAbiCoder: AbiCoder, Interface } = require("@ethersproject/abi");
 const { Address } = require("@ethereumjs/util");
-const { KVStore, AccountState, StateStore } = require("./blockchain");
-const { StateManager, EVM } = require("./evm");
+const { KVStore, StateStore } = require("./blockchain");
+const { StateManager, AccountState, EVM } = require("./evm");
 const { encodeDeployment, encodeFunction, compileContract } = require("./utils");
 
 // const getAddressKey = (address) => {
@@ -13,7 +13,7 @@ const { encodeDeployment, encodeFunction, compileContract } = require("./utils")
 // };
 
 const INITIAL_GREETING = "Hello, World!";
-const SECOND_GREETING = "Hola, Mundo!";
+const SECOND_GREETING = "How are you?";
 
 async function main() {
   /* -----------------------------
