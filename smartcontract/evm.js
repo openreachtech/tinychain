@@ -84,7 +84,7 @@ class StateManager {
   async commit() {}
 
   async clearContractStorage(address) {
-    console.log(`clear storage of ${StateManager.key(address)}`);
+    // console.log(`clear storage of ${StateManager.key(address)}`);
     this._modifies = [];
   }
 
@@ -103,7 +103,7 @@ class StateManager {
       keys.push(...kv.value.split("|"));
       this._modifies.forEach((k) => {
         if (keys.find((key) => key === k)) return;
-        this.keys.push(k);
+        keys.push(k);
       });
     }
 
@@ -167,4 +167,4 @@ class StateManager {
   }
 }
 
-module.exports = { emptySlot, StateManager, EVM };
+module.exports = { StateManager, EVM };

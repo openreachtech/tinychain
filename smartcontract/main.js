@@ -19,7 +19,7 @@ async function main() {
   /* -----------------------------
     Deploy
    ----------------------------- */
-  const bytecode = compileContract("./smartcontract", "Greeter.sol");
+  const bytecode = compileContract("./smartcontract/contract", "Greeter.sol");
 
   const calldata = encodeDeployment(bytecode, {
     types: ["string"],
@@ -53,20 +53,30 @@ async function main() {
   statestore.updateBalance(StateManager.key(accountAddress), -Number(result.execResult.executionGasUsed));
   statestore.incrementNonce(StateManager.key(accountAddress));
 
-  statestore.store.print();
+  // statestore.store.print();
 
   /* -----------------------------
     Get
    ----------------------------- */
-  const sigHash = new Interface(["function greet()"]).getSighash("greet");
+  const greetingSigHash = new Interface(["function greet()"]).getSighash("greet");
   result = await evm.runCall({
     to: contractAddress,
     caller: accountAddress,
-    data: Buffer.from(sigHash.slice(2), "hex"),
+    data: Buffer.from(greetingSigHash.slice(2), "hex"),
   });
 
   let greeting = AbiCoder.decode(["string"], result.execResult.returnValue);
   console.log(greeting);
+
+  const counterSigHash = new Interface(["function counter()"]).getSighash("counter");
+  result = await evm.runCall({
+    to: contractAddress,
+    caller: accountAddress,
+    data: Buffer.from(counterSigHash.slice(2), "hex"),
+  });
+
+  let counter = AbiCoder.decode(["uint256"], result.execResult.returnValue);
+  console.log(counter.toString());
 
   /* -----------------------------
     Set
@@ -85,13 +95,22 @@ async function main() {
   result = await evm.runCall({
     to: contractAddress,
     caller: accountAddress,
-    data: Buffer.from(sigHash.slice(2), "hex"),
+    data: Buffer.from(greetingSigHash.slice(2), "hex"),
   });
 
   greeting = AbiCoder.decode(["string"], result.execResult.returnValue);
   console.log(greeting);
 
-  // statestore.store.print();
+  result = await evm.runCall({
+    to: contractAddress,
+    caller: accountAddress,
+    data: Buffer.from(counterSigHash.slice(2), "hex"),
+  });
+
+  counter = AbiCoder.decode(["uint256"], result.execResult.returnValue);
+  console.log(counter.toString());
+
+  statestore.store.print();
 }
 
 // const generateContractAddress = (address, account) => {

@@ -8,10 +8,13 @@ class Tinychain {
   constructor(wallet, genesisStates) {
     this.wallet = wallet ? wallet : new Wallet(); // Rewardを受け取るウォレット
     this.pool = new TxPool(genesisStates);
-    this.store = new StateStore(genesisStates);
+    // this.store = new StateStore(genesisStates);
     this.blocks = [new Block(0, "", 0, [], "", StateStore.computeStateRoot(this.store.states), [])];
     this.votes = [];
     this.pendingBlock = null;
+
+    this.kvstore = new KVStore(); // key-valueストア
+    this.statestore = new StateStore(this.kvstore);
   }
 
   latestBlock() {
