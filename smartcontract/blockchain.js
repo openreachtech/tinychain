@@ -1,14 +1,17 @@
 "use strict";
 
+const Web3 = require("web3");
+const web3 = new Web3();
 const SHA256 = require("crypto-js/sha256");
-const { now, toHexString, emptySlot, EC } = require("./utils");
+const { Address } = require("@ethereumjs/util");
+const { now, emptySlot, EC, ZeroAddress } = require("./utils");
 const { StateManager, AccountState, EVM } = require("./evm");
 
 class Tinychain {
   constructor(wallet, genesisStates) {
     this.wallet = wallet ? wallet : new Wallet(); // Rewardを受け取るウォレット
     this.kvstore = new KVStore(); // key-valueストア
-    this.statestore = new StateStore(this.kvstore);
+    this.statestore = new StateStore(this.kvstore, []);
     // genesis statesを反映
     for (const state of genesisStates) {
       this.statestore.setAccountState(StateManager.key(state.key), state);
@@ -219,9 +222,9 @@ class KVStore {
 }
 
 class StateStore {
-  constructor(store) {
+  constructor(store, accounts) {
     this.store = store;
-    this.accounts = [];
+    this.accounts = accounts;
   }
 
   decodeAccountState(kv) {
@@ -267,7 +270,7 @@ class StateStore {
   }
 
   clone() {
-    return new StateStore(this.store.clone());
+    return new StateStore(this.store.clone(), [...this.accounts]);
   }
 
   static computeStateRoot(statestore) {
@@ -291,14 +294,15 @@ class StateStore {
       // スマートコントラクトの実行なら
       const evm = new EVM(statestore);
       const result = await evm.runCall({
-        caller: `0x${tx.from}`,
+        caller: Address.fromString(`0x${tx.from}`),
+        to: `0x${tx.to}` !== ZeroAddress ? Address.fromString(`0x${tx.to}`) : undefined,
         data: tx.data,
         gasLimit: tx.gasLimit,
         gasPrice: tx.gasPrice,
         isStatic: false,
       });
       gasUsed = Number(result.execResult.executionGasUsed);
-      if (result.createdAddress) receipt.createdAddress = result.createdAddress;
+      if (result.createdAddress) receipt.createdAddress = result.createdAddress.toString("hex");
     }
 
     statestore.updateBalance(tx.from, -(gasUsed * Number(tx.gasPrice))); // ガス代を徴収
@@ -313,13 +317,13 @@ class StateStore {
 class Transaction {
   constructor(from, to, amount, data, gasPrice = 1, gasLimit = 16777215, sig = "") {
     this.from = StateManager.key(from);
-    this.to = StateManager.key(to);
+    this.to = to !== "" ? StateManager.key(to) : StateManager.key(ZeroAddress);
     this.amount = amount;
-    this.data = data;
+    this.data = Buffer.from(data, "hex");
     this.gasPrice = BigInt(gasPrice);
     this.gasLimit = BigInt(gasLimit);
     this.signature = sig;
-    this.hash = Transaction.hash(from, to, amount, data, gasPrice, gasLimit);
+    this.hash = Transaction.hash(this.from, this.to, this.amount, this.data, this.gasPrice, this.gasLimit);
   }
 
   toString() {
@@ -327,12 +331,14 @@ class Transaction {
   }
 
   static hash(from, to, amount, data, gasPrice, gasLimit) {
-    return SHA256(`${from},${to},${amount},${data},${gasPrice.toString()},${gasLimit.toString()}`).toString();
+    return SHA256(
+      `${from},${to},${amount},${data.toString("hex")},${gasPrice.toString()},${gasLimit.toString()}`
+    ).toString();
   }
 
-  static validateSig(tx, address) {
-    return EC.keyFromPublic(address, "hex").verify(tx.hash, tx.signature);
-  }
+  // static validateSig(tx, address) {
+  //   return EC.keyFromPublic(address, "hex").verify(tx.hash, tx.signature);
+  // }
 }
 
 class TxPool {
@@ -356,11 +362,13 @@ class TxPool {
 
   static validateTx(tx, states) {
     // hash値が正しく計算されているかチェック
-    if (tx.hash !== Transaction.hash(tx.from, tx.to, tx.amount)) {
-      throw new Error(`invalid tx hash. expected: ${Transaction.hash(tx.from, tx.to, tx.amount)}`);
+    if (tx.hash !== Transaction.hash(tx.from, tx.to, tx.amount, tx.data, tx.gasPrice, tx.gasLimit)) {
+      throw new Error(
+        `invalid tx hash. expected: ${Transaction.hash(tx.from, tx.to, tx.amount, tx.data, tx.gasPrice, tx.gasLimit)}`
+      );
     }
     // 署名が正当かどうかチェック
-    if (!Transaction.validateSig(tx, tx.from)) {
+    if (!Wallet.validateSig(tx.hash, tx.signature, tx.from)) {
       throw new Error(`invalid signature`);
     }
     // 送金額が残高以下であるかチェック
@@ -400,24 +408,29 @@ class Vote {
 
 class Wallet {
   constructor(key) {
-    this.key = key ? key : EC.genKeyPair(); // 秘密鍵の生成
-    this.priKey = this.key.getPrivate();
-    this.pubKey = this.key.getPublic().encode("hex"); // この公開鍵をアドレスとして使う
+    this._wallet = key ? web3.eth.accounts.privateKeyToAccount(key) : web3.eth.accounts.create();
+    this.priKey = this._wallet.privateKey;
+    this.address = this._wallet.address.toLowerCase();
   }
   // トランザクションに署名する関数
   signTx(tx) {
-    tx.signature = toHexString(this.key.sign(tx.hash).toDER());
+    tx.signature = web3.eth.accounts.sign(tx.hash, this.priKey).signature;
     return tx;
   }
   // 投票に署名する関数
   signVote(vote) {
-    vote.signature = toHexString(this.key.sign(vote.hash).toDER());
+    vote.signature = web3.eth.accounts.sign(vote.hash, this.priKey).signature;
     return vote;
   }
   // Blockに署名する関数
   signBlock(block) {
-    block.signature = toHexString(this.key.sign(block.hash).toDER());
+    block.signature = web3.eth.accounts.sign(block.hash, this.priKey).signature;
     return block;
+  }
+
+  static validateSig(message, signature, expected) {
+    const exp = expected.startsWith("0x") ? expected : `0x${expected}`;
+    return web3.eth.accounts.recover(message, signature).toLowerCase() === exp;
   }
 }
 

@@ -7,18 +7,13 @@ const Solc = require("solc");
 const EC = new ec("secp256k1");
 
 const emptySlot = "0000000000000000000000000000000000000000000000000000000000000000";
+const ZeroAddress = "0x0000000000000000000000000000000000000000";
 
 const now = () => Math.floor(new Date().getTime() / 1000);
 
-const toHexString = (bytes) => {
-  return Array.from(bytes, (byte) => {
-    return ("0" + (byte & 0xff).toString(16)).slice(-2);
-  }).join("");
-};
-
 const readWallet = (location) => {
   const buffer = readFileSync(location, "utf8");
-  return EC.keyFromPrivate(buffer.toString(), "hex");
+  return buffer.toString();
 };
 
 const encodeDeployment = (bytecode, params) => {
@@ -81,4 +76,13 @@ const compileContract = (dir, file) => {
   return output.contracts[file][file.slice(0, -4)].evm.bytecode.object;
 };
 
-module.exports = { emptySlot, EC, toHexString, now, readWallet, encodeDeployment, encodeFunction, compileContract };
+module.exports = {
+  emptySlot,
+  ZeroAddress,
+  EC,
+  now,
+  readWallet,
+  encodeDeployment,
+  encodeFunction,
+  compileContract,
+};

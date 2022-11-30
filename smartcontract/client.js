@@ -16,8 +16,8 @@ program
   .description("create new wallet")
   .action(async (subCmd, options) => {
     const wallet = new Wallet();
-    console.log(`wallet address is ${wallet.pubKey}`);
-    writeFileSync(`${options.dir}/privkey-${subCmd}`, wallet.priKey.toString(16));
+    console.log(`wallet address is ${wallet.address}`);
+    writeFileSync(`${options.dir}/privkey-${subCmd}`, wallet.priKey);
   });
 
 program
