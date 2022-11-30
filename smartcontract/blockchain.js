@@ -1,9 +1,8 @@
 "use strict";
 
 const SHA256 = require("crypto-js/sha256");
-
 const { now, toHexString, emptySlot, EC } = require("./utils");
-const { StateManager, AccountState } = require("./evm");
+const { StateManager, AccountState, EVM } = require("./evm");
 
 class Tinychain {
   constructor(wallet, genesisStates) {
@@ -14,12 +13,11 @@ class Tinychain {
     for (const state of genesisStates) {
       this.statestore.setAccountState(StateManager.key(state.key), state);
     }
-
-    this.pool = new TxPool(genesisStates);
-    // this.store = new StateStore(genesisStates);
-    this.blocks = [new Block(0, "", 0, [], "", StateStore.computeStateRoot(this.store.states), [])];
+    this.pool = new TxPool(this.statestore.clone());
+    this.blocks = [new Block(0, "", 0, [], "", StateStore.computeStateRoot(this.statestore), [])];
     this.votes = [];
     this.pendingBlock = null;
+    // this.store = new StateStore(genesisStates);
   }
 
   latestBlock() {
@@ -186,6 +184,7 @@ class KVStore {
   constructor(kvs = []) {
     this.kvs = kvs;
   }
+
   print() {
     this.kvs.forEach((kv) => console.log(kv));
   }
@@ -213,6 +212,10 @@ class KVStore {
       this.kvs[i] = newKV;
     }
   }
+
+  clone() {
+    return new KVStore(this.kvs.map((kv) => new KV(kv.key, kv.value)));
+  }
 }
 
 class StateStore {
@@ -222,7 +225,7 @@ class StateStore {
   }
 
   decodeAccountState(kv) {
-    if (kv.value === emptySlot) return new AccountState("0x" + kv.key, 0, 0, 0);
+    if (kv.value === emptySlot) return new AccountState(kv.key, 0, 0, 0);
     const a = JSON.parse(kv.value);
     return new AccountState(a.key, a.nonce, a.balance, a.stake, a.storageRoot, a.codeHash);
   }
@@ -243,6 +246,11 @@ class StateStore {
     if (!this.accounts.find((a) => a === addressKey)) this.accounts.push(addressKey);
   }
 
+  balance(addressKey) {
+    const state = this.accountState(addressKey);
+    return state ? state.balance : 0;
+  }
+
   updateBalance(addressKey, amount) {
     let state = this.accountState(addressKey);
     if (!state) throw new Error(`failed to reduce balance. not account found by ${addressKey}`);
@@ -258,6 +266,10 @@ class StateStore {
     this.setAccountState(addressKey, state);
   }
 
+  clone() {
+    return new StateStore(this.store.clone());
+  }
+
   static computeStateRoot(statestore) {
     // StateRootは「全アカウントのstatesを文字列にして繋げたもののhash値」とする
     const serialized = statestore.accounts.reduce((pre, addressKey) => {
@@ -266,91 +278,56 @@ class StateStore {
     }, "");
     return SHA256(serialized).toString();
   }
+
+  static async applyTransaction(statestore, tx) {
+    let receipt = { status: "pending" };
+    let gasUsed;
+    if (tx.data === "") {
+      // 送金なら
+      statestore.updateBalance(tx.from, -tx.amount);
+      statestore.updateBalance(tx.to, tx.amount);
+      gasUsed = 21000; // 送金トランザクションのガス代は、固定
+    } else {
+      // スマートコントラクトの実行なら
+      const evm = new EVM(statestore);
+      const result = await evm.runCall({
+        caller: `0x${tx.from}`,
+        data: tx.data,
+        gasLimit: tx.gasLimit,
+        gasPrice: tx.gasPrice,
+        isStatic: false,
+      });
+      gasUsed = Number(result.execResult.executionGasUsed);
+      if (result.createdAddress) receipt.createdAddress = result.createdAddress;
+    }
+
+    statestore.updateBalance(tx.from, -(gasUsed * Number(tx.gasPrice))); // ガス代を徴収
+    statestore.incrementNonce(tx.from); // nonceをインクリメント
+
+    receipt.gasUsed = gasUsed;
+
+    return receipt;
+  }
 }
 
-// class State {
-//   constructor(addr, amount, stake = 0) {
-//     this.key = addr; // walletのpubkeyをkeyとして使う
-//     this.balance = amount;
-//     this.stake = stake; // stakeは簡略化のためGenesisStateからのみ設定する
-//   }
-
-//   toString() {
-//     return JSON.stringify(this);
-//   }
-
-//   updateBalance(amount) {
-//     this.balance += amount;
-//     if (this.balance < 0) throw new Error(`ballance of ${this.key} is negative`);
-//   }
-// }
-
-// class StateStore {
-//   constructor(states = []) {
-//     this.states = states; // stateを配列の形で保持する
-//   }
-
-//   balanceOf(addr) {
-//     const state = this.states.find((state) => state.key === addr);
-//     return state ? state.balance : 0;
-//   }
-
-//   validators() {
-//     return this.states.filter((state) => 0 < state.stake); // stakeしていればバリデータとみなす
-//   }
-
-//   static applyTransactions(states, txs) {
-//     let copyStates = states.map((s) => new State(s.key, s.balance, s.stake));
-//     txs.forEach((tx) => (copyStates = StateStore.applyTransaction(copyStates, tx)));
-//     return copyStates;
-//   }
-
-//   applyRewards(propoer, votes) {
-//     this.states[this.states.findIndex((s) => s.key === propoer)].balance += 3; // proposerのリワードは”３”
-//     votes
-//       .filter((v) => v.isYes)
-//       .map((v) => v.voter)
-//       .forEach((voter) => {
-//         this.states[this.states.findIndex((s) => s.key === voter)].balance += 1; // yesに投票したvoterのリワードは”１”
-//       });
-//   }
-
-//   static applyTransaction(states, tx) {
-//     // fromのバランスを更新
-//     const fromIndex = states.findIndex((state) => state.key === tx.from);
-//     if (fromIndex < 0) throw new Error(`no state found by key(=${tx.from})`);
-//     states[fromIndex].updateBalance(-tx.amount);
-//     // toのバランスを更新
-//     const toIndex = states.findIndex((state) => state.key === tx.to);
-//     if (toIndex < 0) {
-//       states.push(new State(tx.to, tx.amount)); // stateを新規追加
-//     } else {
-//       states[toIndex].updateBalance(tx.amount); // stateを更新
-//     }
-//     return states;
-//   }
-
-//   static computeStateRoot(states) {
-//     // StateRootは「全statesを文字列にして繋げたもののhash値」とする
-//     return SHA256(states.reduce((pre, state) => pre + state.toString(), "")).toString();
-//   }
-// }
-
 class Transaction {
-  constructor(from, to, amount, sig = "") {
-    this.from = from;
-    this.to = to;
+  constructor(from, to, amount, data, gasPrice = 1, gasLimit = 16777215, sig = "") {
+    this.from = StateManager.key(from);
+    this.to = StateManager.key(to);
     this.amount = amount;
+    this.data = data;
+    this.gasPrice = BigInt(gasPrice);
+    this.gasLimit = BigInt(gasLimit);
     this.signature = sig;
-    this.hash = Transaction.hash(from, to, amount);
+    this.hash = Transaction.hash(from, to, amount, data, gasPrice, gasLimit);
   }
 
   toString() {
     return JSON.stringify(this);
   }
 
-  static hash(from, to, amount) {
-    return SHA256(`${from},${to},${amount}`).toString();
+  static hash(from, to, amount, data, gasPrice, gasLimit) {
+    return SHA256(`${from},${to},${amount},${data},${gasPrice.toString()},${gasLimit.toString()}`).toString();
   }
 
   static validateSig(tx, address) {
@@ -359,22 +336,22 @@ class Transaction {
 }
 
 class TxPool {
-  constructor(states) {
+  constructor(statestore) {
     this.txs = [];
-    this.pendingStates = states;
+    this.pendingStates = statestore;
   }
 
-  clear(states) {
+  clear(statestore) {
     this.txs = [];
-    this.pendingStates = states.map((s) => new State(s.key, s.balance, s.stake));
+    this.pendingStates = statestore;
   }
 
-  addTx(tx) {
+  async addTx(tx) {
     TxPool.validateTx(tx, this.pendingStates);
     if (this.txs.find((t) => t.hash === tx.hash)) return false; // 新規のTxではない
-    this.pendingStates = StateStore.applyTransaction(this.pendingStates, tx);
+    const receipt = await StateStore.applyTransaction(this.pendingStates, tx);
     this.txs.push(tx);
-    return true;
+    return receipt;
   }
 
   static validateTx(tx, states) {
@@ -387,7 +364,7 @@ class TxPool {
       throw new Error(`invalid signature`);
     }
     // 送金額が残高以下であるかチェック
-    const balance = states.find((s) => s.key === tx.from).balance;
+    const balance = states.balance(tx.from);
     if (balance < tx.amount) {
       throw new Error(`insufficient fund(=${balance})`);
     }
