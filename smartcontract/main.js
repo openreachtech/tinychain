@@ -111,6 +111,9 @@ async function main() {
   console.log(counter.toString());
 
   statestore.store.print();
+
+  const stateroot = StateStore.computeStateRoot(statestore);
+  console.log(stateroot);
 }
 
 // const generateContractAddress = (address, account) => {

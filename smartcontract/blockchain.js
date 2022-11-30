@@ -228,6 +228,7 @@ class AccountState {
 class StateStore {
   constructor(store) {
     this.store = store;
+    this.accounts = [];
   }
 
   decodeAccountState(kv) {
@@ -248,6 +249,8 @@ class StateStore {
 
   setAccountState(addressKey, state) {
     this.store.set(addressKey, this.encodeAccountState(state));
+    // 新規の場合、アカウントリストに追加
+    if (!this.accounts.find((a) => a === addressKey)) this.accounts.push(addressKey);
   }
 
   updateBalance(addressKey, amount) {
@@ -263,6 +266,15 @@ class StateStore {
     if (!state) throw new Error(`failed to increment nonce. not account found by ${addressKey}`);
     state.nonce++;
     this.setAccountState(addressKey, state);
+  }
+
+  static computeStateRoot(statestore) {
+    // StateRootは「全アカウントのstatesを文字列にして繋げたもののhash値」とする
+    const serialized = statestore.accounts.reduce((pre, addressKey) => {
+      const state = statestore.accountState(addressKey);
+      return pre + statestore.encodeAccountState(state);
+    }, "");
+    return SHA256(serialized).toString();
   }
 }
 
