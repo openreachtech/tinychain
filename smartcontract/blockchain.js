@@ -4,7 +4,7 @@ const Web3 = require("web3");
 const web3 = new Web3();
 const SHA256 = require("crypto-js/sha256");
 const { Address } = require("@ethereumjs/util");
-const { now, emptySlot, EC, ZeroAddress } = require("./utils");
+const { now, emptySlot, ZeroAddress } = require("./utils");
 const { StateManager, AccountState, EVM } = require("./evm");
 
 class Tinychain {
@@ -27,13 +27,13 @@ class Tinychain {
     return this.blocks[this.blocks.length - 1];
   }
 
-  addBlock(newBlock) {
+  async addBlock(newBlock) {
     let isNew = this.latestBlock().height < newBlock.height ? true : false;
     if (!isNew) return false; // 新規のブロックでない場合はスキップ
     this.validateBlock(newBlock, true);
     this.blocks.push(newBlock);
-    this.store.states = StateStore.applyTransactions(this.store.states, newBlock.txs); // stateの更新
-    this.store.applyRewards(newBlock.proposer, newBlock.votes); // リワードの付与
+    await StateStore.applyTransactions(this.statestore, newBlock.txs); // stateの更新
+    this.statestore.applyRewards(newBlock.proposer, newBlock.votes); // リワードの付与
     this.pool.clear(this.store.states); // ペンディングTxsとStatesのクリア
     this.votes = []; // 投票のクリア
     this.pendingBlock = null; // ペンディングBlockのクリア
@@ -41,11 +41,12 @@ class Tinychain {
     return true;
   }
 
-  validateBlock(b, isApproved = false) {
+  async validateBlock(b, isApproved = false) {
     const preBlock = this.latestBlock();
-    const expectedProposer = this.electProposer(this.store.validators(), b.height);
-    const states = StateStore.applyTransactions(this.store.states, b.txs);
-    const expectedStateRoot = StateStore.computeStateRoot(states);
+    const expectedProposer = this.electProposer(this.statestore.validators(), b.height);
+    const statestore = this.statestore.clone()
+    await StateStore.applyTransactions(statestore, b.txs);
+    const expectedStateRoot = StateStore.computeStateRoot(statestore);
     const expHash = Block.hash(b.height, b.preHash, b.timestamp, b.txs, b.proposer, b.stateRoot, b.votes);
     if (b.height !== preBlock.height + 1) {
       // ブロック高さが直前のブロックの次であるかチェック
@@ -63,7 +64,10 @@ class Tinychain {
       // ハッシュ値が正しいく計算されているかチェック
       throw new Error(`invalid hash. expected: ${expHash}`);
     }
-    Block.validateSig(b); // 署名が正しいかチェック
+    // 署名が正しいかチェック
+    if (!Wallet.validateSig(b.hash, b.signature, b.proposer)) {
+      throw new Error(`invalid block signature`);
+    }
     // 承認されたブロックの場合は、2/3以上のyesを集めているかチェック
     if (isApproved) {
       if (!this.tallyVotes(b.votes)) {
@@ -108,36 +112,36 @@ class Tinychain {
       throw new Error(`invalid vote hash. expected: ${expected}`);
     }
     // 署名が正当かどうかチェック
-    if (!Vote.validateSig(vote)) {
+    if (!Wallet.validateSig(vote.hash, vote.signature, vote.voter)) {
       throw new Error(`invalid signature`);
     }
     // voterがvalidatorかチェック
-    if (!this.store.validators().find((v) => v.key === vote.voter)) {
+    if (!this.statestore.validators().find((v) => v.key === vote.voter)) {
       throw new Error(`voter should be validator`);
     }
     // 当該プロックのプロポーザではないことをチェック
-    if (vote.voter === this.electProposer(this.store.validators(), this.latestBlock().height + 1)) {
+    if (vote.voter === this.electProposer(this.statestore.validators(), this.latestBlock().height + 1)) {
       throw new Error(`voter is proposer`);
     }
   }
 
   tallyVotes(votes) {
-    const rate = votes.filter((v) => v.isYes).length / (this.store.validators().length - 1); // yes投票の割合
+    const rate = votes.filter((v) => v.isYes).length / (this.statestore.validators().length - 1); // yes投票の割合
     return 2 / 3 <= rate; // yesが2/3以上であれば合格
   }
 
   generateBlock() {
     const preBlock = this.latestBlock();
-    const propoer = this.wallet.pubKey;
+    const propoer = StateManager.key(this.wallet.address);
     const stateRoot = StateStore.computeStateRoot(this.pool.pendingStates);
     const b = new Block(preBlock.height + 1, preBlock.hash, now(), this.pool.txs, propoer, stateRoot);
     return this.wallet.signBlock(b);
   }
 
   isProposer() {
-    const validators = this.store.validators();
+    const validators = this.statestore.validators();
     const nextHeight = this.latestBlock().height + 1;
-    return this.wallet.pubKey === this.electProposer(validators, nextHeight);
+    return StateManager.key(this.wallet.address) === this.electProposer(validators, nextHeight);
   }
 
   start(broadcastBlock) {
@@ -148,7 +152,7 @@ class Tinychain {
       this.pendingBlock = this.generateBlock();
       broadcastBlock(this.pendingBlock);
       console.log(`proposing ${this.pendingBlock.height} th height of block`);
-    }, 10 * 1000); // x秒間隔で実行する
+    }, 3 * 1000); // x秒間隔で実行する
   }
 }
 
@@ -158,8 +162,7 @@ class Block {
     this.preHash = preHash;
     this.timestamp = timestamp;
     this.txs = txs;
-    this.proposer = proposer;
-    this.stateRoot = stateRoot;
+    (this.proposer = StateManager.key(proposer)), (this.stateRoot = stateRoot);
     this.votes = votes;
     this.signature = sig;
     this.hash = Block.hash(height, preHash, timestamp, txs, proposer, stateRoot, votes);
@@ -171,9 +174,9 @@ class Block {
     return SHA256(`${height},${preHash},${timestamp},${txsStr},${proposer},${stateRoot},${votesStr}`).toString();
   }
 
-  static validateSig(block) {
-    return EC.keyFromPublic(block.proposer, "hex").verify(block.hash, block.signature);
-  }
+  // static validateSig(block) {
+  //   return EC.keyFromPublic(block.proposer, "hex").verify(block.hash, block.signature);
+  // }
 }
 
 class KV {
@@ -225,6 +228,19 @@ class StateStore {
   constructor(store, accounts) {
     this.store = store;
     this.accounts = accounts;
+  }
+
+  validators() {
+    const self = this;
+    return this.accounts.map((account) => self.accountState(account)).filter((accountState) => 0 < accountState.stake);
+  }
+
+  applyRewards(proposer, votes) {
+    this.updateBalance(proposer, 30000); // proposerのリワードは”30000”
+    for (const vote of votes) {
+      if (!vote.isYes) continue;
+      this.updateBalance(vote.voter, 10000); // yesに投票したvoterのリワードは”10000”
+    }
   }
 
   decodeAccountState(kv) {
@@ -282,6 +298,12 @@ class StateStore {
     return SHA256(serialized).toString();
   }
 
+  static async applyTransactions(statestore, txs) {
+    for (const tx of txs) {
+      await StateStore.applyTransaction(statestore, tx);
+    }
+  }
+
   static async applyTransaction(statestore, tx) {
     let receipt = { status: "pending" };
     let gasUsed;
@@ -327,7 +349,12 @@ class Transaction {
   }
 
   toString() {
-    return JSON.stringify(this);
+    let txObj = {};
+    for (const key in this) {
+      if (key === "data") txObj[key] = this[key].toString("hex");
+      else txObj[key] = this[key].toString();
+    }
+    return JSON.stringify(txObj);
   }
 
   static hash(from, to, amount, data, gasPrice, gasLimit) {
@@ -335,10 +362,6 @@ class Transaction {
       `${from},${to},${amount},${data.toString("hex")},${gasPrice.toString()},${gasLimit.toString()}`
     ).toString();
   }
-
-  // static validateSig(tx, address) {
-  //   return EC.keyFromPublic(address, "hex").verify(tx.hash, tx.signature);
-  // }
 }
 
 class TxPool {
@@ -362,10 +385,9 @@ class TxPool {
 
   static validateTx(tx, states) {
     // hash値が正しく計算されているかチェック
-    if (tx.hash !== Transaction.hash(tx.from, tx.to, tx.amount, tx.data, tx.gasPrice, tx.gasLimit)) {
-      throw new Error(
-        `invalid tx hash. expected: ${Transaction.hash(tx.from, tx.to, tx.amount, tx.data, tx.gasPrice, tx.gasLimit)}`
-      );
+    const expectedHash = Transaction.hash(tx.from, tx.to, tx.amount, tx.data, tx.gasPrice, tx.gasLimit);
+    if (tx.hash !== expectedHash) {
+      throw new Error(`invalid tx hash. expected: ${expectedHash}`);
     }
     // 署名が正当かどうかチェック
     if (!Wallet.validateSig(tx.hash, tx.signature, tx.from)) {
@@ -387,7 +409,7 @@ class Vote {
   constructor(height, blockHash, addr, isYes, sig = "") {
     this.height = height;
     this.blockHash = blockHash;
-    this.voter = addr;
+    this.voter = StateManager.key(addr);
     this.isYes = isYes;
     this.signature = sig;
     this.hash = Vote.hash(this.heigh, this.blockHash, this.voter, this.isYes);
@@ -399,10 +421,6 @@ class Vote {
 
   static hash(height, blockHash, voter, isYes) {
     return SHA256(`${height},${blockHash},${voter},${isYes}`).toString();
-  }
-
-  static validateSig(vote) {
-    return EC.keyFromPublic(vote.voter, "hex").verify(vote.hash, vote.signature);
   }
 }
 

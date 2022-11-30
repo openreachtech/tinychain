@@ -60,16 +60,16 @@ class StateManager {
 
   async putAccount(address, account) {
     const addressKey = StateManager.key(address);
-    const state = this.getAccount(address);
-    const newState = new AccountState(
+    const accountState = this.statestore.accountState(addressKey);
+    const newAccountState = new AccountState(
       addressKey,
       Number(account.nonce),
       Number(account.balance),
-      state.stake,
+      accountState.stake,
       account.storageRoot.toString("hex"),
       account.codeHash.toString("hex")
     );
-    this.statestore.setAccountState(addressKey, newState);
+    this.statestore.setAccountState(addressKey, newAccountState);
   }
 
   storageKey(address, key) {
