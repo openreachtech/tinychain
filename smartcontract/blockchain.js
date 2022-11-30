@@ -303,12 +303,12 @@ class StateStore {
   static async applyTransaction(statestore, tx) {
     let receipt = { status: "pending" };
     let gasUsed;
-    if (tx.data === "") {
+    if (tx.data.length === 0 && `0x${tx.to}` !== ZeroAddress) {
       // 送金なら
       statestore.updateBalance(tx.from, -tx.amount);
       statestore.updateBalance(tx.to, tx.amount);
       gasUsed = 21000; // 送金トランザクションのガス代は、固定
-    } else {
+    } else if (tx.data.length !== 0) {
       // スマートコントラクトの実行なら
       const evm = new EVM(statestore);
       const result = await evm.runCall({
@@ -321,6 +321,8 @@ class StateStore {
       });
       gasUsed = Number(result.execResult.executionGasUsed);
       if (result.createdAddress) receipt.createdAddress = result.createdAddress.toString("hex");
+    } else {
+      throw new Error(`invalid tx(=${tx.toString()})`)
     }
 
     statestore.updateBalance(tx.from, -(gasUsed * Number(tx.gasPrice))); // ガス代を徴収
@@ -333,7 +335,7 @@ class StateStore {
 }
 
 class Transaction {
-  constructor(from, to, amount, data, gasPrice = 1, gasLimit = 16777215, sig = "") {
+  constructor(from, to, amount, data = "", gasPrice = 1, gasLimit = 16777215, sig = "") {
     this.from = StateManager.key(from);
     this.to = to !== "" ? StateManager.key(to) : StateManager.key(ZeroAddress);
     this.amount = amount;

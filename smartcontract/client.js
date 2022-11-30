@@ -39,7 +39,7 @@ program
   .option("-p, --port <number>", "the port json endpoint", 3001)
   .action(async (subCmd, options) => {
     const wallet = new Wallet(readWallet(options.wallet));
-    const tx = wallet.signTx(new Transaction(wallet.pubKey, subCmd, options.amount));
+    const tx = wallet.signTx(new Transaction(wallet.address, subCmd, options.amount));
     const result = await axios.post(`http://localhost:${options.port}/sendTransaction`, tx);
     console.log(result.data);
   });
