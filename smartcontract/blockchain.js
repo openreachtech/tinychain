@@ -322,7 +322,7 @@ class StateStore {
       gasUsed = Number(result.execResult.executionGasUsed);
       if (result.createdAddress) receipt.createdAddress = result.createdAddress.toString("hex");
     } else {
-      throw new Error(`invalid tx(=${tx.toString()})`)
+      throw new Error(`invalid tx(=${tx.toString()})`);
     }
 
     statestore.updateBalance(tx.from, -(gasUsed * Number(tx.gasPrice))); // ガス代を徴収

@@ -19,7 +19,7 @@ async function main() {
   /* -----------------------------
     Deploy
    ----------------------------- */
-  const bytecode = compileContract("./smartcontract/contract", "Greeter.sol");
+  const bytecode = compileContract("./contract", "Greeter.sol");
 
   const calldata = encodeDeployment(bytecode, {
     types: ["string"],
@@ -32,7 +32,7 @@ async function main() {
   const accountAddress = Address.fromPrivateKey(accountPk);
 
   const kvstore = new KVStore();
-  const statestore = new StateStore(kvstore);
+  const statestore = new StateStore(kvstore, []);
   statestore.setAccountState(
     StateManager.key(accountAddress),
     new AccountState(accountAddress.toString("hex"), 0, 1000000, 0)
@@ -109,8 +109,9 @@ async function main() {
 
   counter = AbiCoder.decode(["uint256"], result.execResult.returnValue);
   console.log(counter.toString());
+  console.log(result);
 
-  statestore.store.print();
+  // statestore.store.print();
 
   const stateroot = StateStore.computeStateRoot(statestore);
   console.log(stateroot);
