@@ -34,7 +34,7 @@ class Tinychain {
     this.blocks.push(newBlock);
     await StateStore.applyTransactions(this.statestore, newBlock.txs); // stateの更新
     this.statestore.applyRewards(newBlock.proposer, newBlock.votes); // リワードの付与
-    this.pool.clear(this.store.states); // ペンディングTxsとStatesのクリア
+    this.pool.clear(this.statestore.clone()); // ペンディングTxsとStatesのクリア
     this.votes = []; // 投票のクリア
     this.pendingBlock = null; // ペンディングBlockのクリア
     console.log(`> ⛓ new block added! height is ${newBlock.height}`);
@@ -44,7 +44,7 @@ class Tinychain {
   async validateBlock(b, isApproved = false) {
     const preBlock = this.latestBlock();
     const expectedProposer = this.electProposer(this.statestore.validators(), b.height);
-    const statestore = this.statestore.clone()
+    const statestore = this.statestore.clone();
     await StateStore.applyTransactions(statestore, b.txs);
     const expectedStateRoot = StateStore.computeStateRoot(statestore);
     const expHash = Block.hash(b.height, b.preHash, b.timestamp, b.txs, b.proposer, b.stateRoot, b.votes);
@@ -125,8 +125,8 @@ class Tinychain {
     }
   }
 
-  tallyVotes(votes) {
-    const rate = votes.filter((v) => v.isYes).length / (this.statestore.validators().length - 1); // yes投票の割合
+  tallyVotes() {
+    const rate = this.votes.filter((v) => v.isYes).length / (this.statestore.validators().length - 1); // yes投票の割合
     return 2 / 3 <= rate; // yesが2/3以上であれば合格
   }
 
@@ -173,10 +173,6 @@ class Block {
     const votesStr = votes.reduce((pre, vote) => pre + vote.toString(), "");
     return SHA256(`${height},${preHash},${timestamp},${txsStr},${proposer},${stateRoot},${votesStr}`).toString();
   }
-
-  // static validateSig(block) {
-  //   return EC.keyFromPublic(block.proposer, "hex").verify(block.hash, block.signature);
-  // }
 }
 
 class KV {
