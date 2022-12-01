@@ -40,7 +40,7 @@ program
   .action(async (subCmd, options) => {
     const wallet = new Wallet(readWallet(options.wallet));
     const tx = wallet.signTx(new Transaction(wallet.address, subCmd, options.amount));
-    const result = await axios.post(`http://localhost:${options.port}/sendTransaction`, tx);
+    const result = await axios.post(`http://localhost:${options.port}/sendTransaction`, buildTxObj(tx));
     console.log(result.data);
   });
 
@@ -54,8 +54,8 @@ program
   .option("-p, --port <number>", "the port json endpoint", 3001)
   .action(async (subCmd, options) => {
     const wallet = new Wallet(readWallet(options.wallet));
-    const tx = wallet.signTx(new Transaction(wallet.pubKey, subCmd, options.amount, subCmd));
-    const result = await axios.post(`http://localhost:${options.port}/sendTransaction`, tx);
+    const tx = wallet.signTx(new Transaction(wallet.address, options.contract, options.amount, subCmd));
+    const result = await axios.post(`http://localhost:${options.port}/sendTransaction`, buildTxObj(tx));
     console.log(result.data);
   });
 
@@ -64,13 +64,12 @@ program
   .description("call contract function")
   .argument("<data>", "the calldata of transaction")
   .requiredOption("-w, --wallet <string>", "the location of private key")
-  .requiredOption("-a, --amount <number>", "the amount of coin to send")
   .requiredOption("-c, --contract <number>", "the contract address")
   .option("-p, --port <number>", "the port json endpoint", 3001)
   .action(async (subCmd, options) => {
     const wallet = new Wallet(readWallet(options.wallet));
-    const tx = wallet.signTx(new Transaction(wallet.pubKey, subCmd, options.amount, subCmd));
-    const result = await axios.post(`http://localhost:${options.port}/sendTransaction`, tx);
+    const tx = new Transaction("", options.contract, 0, subCmd);
+    const result = await axios.post(`http://localhost:${options.port}/callContract`, buildTxObj(tx));
     console.log(result.data);
   });
 
@@ -80,3 +79,16 @@ process.on("unhandledRejection", (err) => {
   console.log(err);
   process.exit(1);
 });
+
+const buildTxObj = (tx) => {
+  let txObj = {};
+  if (tx.from) txObj.from = tx.from;
+  if (tx.to) txObj.to = tx.to;
+  if (tx.amount) txObj.amount = tx.amount;
+  if (tx.data) txObj.data = tx.data.toString("hex");
+  if (tx.gasPrice) txObj.gasPrice = tx.gasPrice.toString();
+  if (tx.gasLimit) txObj.gasLimit = tx.gasLimit.toString();
+  if (tx.signature) txObj.signature = tx.signature;
+  if (tx.hash) txObj.hash = tx.hash;
+  return txObj;
+};

@@ -10,7 +10,7 @@ async function main() {
   /* -----------------------------
     Deploy
    ----------------------------- */
-  const bytecode = compileContract("./smartcontract/contract", "Greeter.sol");
+  const bytecode = compileContract("./contract", "Greeter.sol");
 
   const calldata = encodeDeployment(bytecode, {
     types: ["string"],
@@ -32,6 +32,12 @@ async function main() {
     values: [SECOND_GREETING],
   });
   console.log(`set calldata: ${setcalldata}\n`);
+
+  /* -----------------------------
+    Counter
+   ----------------------------- */
+  const counterSigHash = new Interface(["function counter()"]).getSighash("counter");
+  console.log(`counter calldata: ${counterSigHash}\n`);
 }
 
 main();

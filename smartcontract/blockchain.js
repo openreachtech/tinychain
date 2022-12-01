@@ -249,24 +249,28 @@ class StateStore {
     return JSON.stringify(state);
   }
 
-  accountState(addressKey) {
+  accountState(address) {
+    const addressKey = StateManager.key(address);
     const kv = this.store.get(addressKey);
     if (!kv) return new AccountState(addressKey, 0, 0, 0);
     return this.decodeAccountState(kv);
   }
 
-  setAccountState(addressKey, state) {
+  setAccountState(address, state) {
+    const addressKey = StateManager.key(address);
     this.store.set(addressKey, this.encodeAccountState(state));
     // 新規の場合、アカウントリストに追加
     if (!this.accounts.find((a) => a === addressKey)) this.accounts.push(addressKey);
   }
 
-  balance(addressKey) {
+  balanceOf(address) {
+    const addressKey = StateManager.key(address);
     const state = this.accountState(addressKey);
     return state ? state.balance : 0;
   }
 
-  updateBalance(addressKey, amount) {
+  updateBalance(address, amount) {
+    const addressKey = StateManager.key(address);
     let state = this.accountState(addressKey);
     if (!state) throw new Error(`failed to reduce balance. not account found by ${addressKey}`);
     state.balance += amount;
@@ -274,11 +278,21 @@ class StateStore {
     this.setAccountState(addressKey, state);
   }
 
-  incrementNonce(addressKey) {
+  incrementNonce(address) {
+    const addressKey = StateManager.key(address);
     let state = this.accountState(addressKey);
     if (!state) throw new Error(`failed to increment nonce. not account found by ${addressKey}`);
     state.nonce++;
     this.setAccountState(addressKey, state);
+  }
+
+  async callContract(address, data) {
+    const evm = new EVM(this.clone());
+    const result = await evm.runCall({
+      to: Address.fromString(address),
+      data: Buffer.from(data, "hex"),
+    });
+    return result.execResult.returnValue;
   }
 
   clone() {
@@ -320,7 +334,7 @@ class StateStore {
         isStatic: false,
       });
       gasUsed = Number(result.execResult.executionGasUsed);
-      if (result.createdAddress) receipt.createdAddress = result.createdAddress.toString("hex");
+      if (result.createdAddress) receipt.contract = result.createdAddress.toString("hex");
     } else {
       throw new Error(`invalid tx(=${tx.toString()})`);
     }
@@ -392,7 +406,7 @@ class TxPool {
       throw new Error(`invalid signature`);
     }
     // 送金額が残高以下であるかチェック
-    const balance = states.balance(tx.from);
+    const balance = states.balanceOf(tx.from);
     if (balance < tx.amount) {
       throw new Error(`insufficient fund(=${balance})`);
     }

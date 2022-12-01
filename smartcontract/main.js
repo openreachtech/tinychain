@@ -103,13 +103,13 @@ async function main() {
 
   result = await evm.runCall({
     to: contractAddress,
-    caller: accountAddress,
+    // caller: accountAddress,
     data: Buffer.from(counterSigHash.slice(2), "hex"),
   });
 
   counter = AbiCoder.decode(["uint256"], result.execResult.returnValue);
   console.log(counter.toString());
-  console.log(result);
+  // console.log(result);
 
   // statestore.store.print();
 
