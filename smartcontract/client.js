@@ -4,7 +4,7 @@ const { writeFileSync } = require("fs");
 const { Command } = require("commander");
 const axios = require("axios");
 const { Transaction, Wallet } = require("./blockchain");
-const { readWallet } = require("./utils");
+const { readWallet, buildTxObj } = require("./utils");
 
 const program = new Command();
 program.name("TinyWallet").description("wallet for tinychain").version("1.0.0");
@@ -67,7 +67,6 @@ program
   .requiredOption("-c, --contract <number>", "the contract address")
   .option("-p, --port <number>", "the port json endpoint", 3001)
   .action(async (subCmd, options) => {
-    const wallet = new Wallet(readWallet(options.wallet));
     const tx = new Transaction("", options.contract, 0, subCmd);
     const result = await axios.post(`http://localhost:${options.port}/callContract`, buildTxObj(tx));
     console.log(result.data);
@@ -79,16 +78,3 @@ process.on("unhandledRejection", (err) => {
   console.log(err);
   process.exit(1);
 });
-
-const buildTxObj = (tx) => {
-  let txObj = {};
-  if (tx.from) txObj.from = tx.from;
-  if (tx.to) txObj.to = tx.to;
-  if (tx.amount) txObj.amount = tx.amount;
-  if (tx.data) txObj.data = tx.data.toString("hex");
-  if (tx.gasPrice) txObj.gasPrice = tx.gasPrice.toString();
-  if (tx.gasLimit) txObj.gasLimit = tx.gasLimit.toString();
-  if (tx.signature) txObj.signature = tx.signature;
-  if (tx.hash) txObj.hash = tx.hash;
-  return txObj;
-};

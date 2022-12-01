@@ -76,6 +76,19 @@ const compileContract = (dir, file) => {
   return output.contracts[file][file.slice(0, -4)].evm.bytecode.object;
 };
 
+const buildTxObj = (tx) => {
+  let txObj = {};
+  if (tx.from) txObj.from = tx.from;
+  if (tx.to) txObj.to = tx.to;
+  if (tx.amount) txObj.amount = tx.amount;
+  if (tx.data) txObj.data = tx.data.toString("hex");
+  if (tx.gasPrice) txObj.gasPrice = tx.gasPrice.toString();
+  if (tx.gasLimit) txObj.gasLimit = tx.gasLimit.toString();
+  if (tx.signature) txObj.signature = tx.signature;
+  if (tx.hash) txObj.hash = tx.hash;
+  return txObj;
+};
+
 module.exports = {
   emptySlot,
   ZeroAddress,
@@ -85,4 +98,5 @@ module.exports = {
   encodeDeployment,
   encodeFunction,
   compileContract,
+  buildTxObj,
 };
