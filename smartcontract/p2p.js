@@ -71,7 +71,7 @@ class P2P {
         // トランザクションを受信した場合、トランザクションプールに追加
         case PacketTypes.Tx:
           try {
-            const tx = recoverTx(parent);
+            const tx = recoverTx(packet);
             const isNew = await self.chain.pool.addTx(tx); // トランザクションを自身のPoolに追加
             if (!isNew) break; // 新しいトランザクションでない場合は、ブロードキャストしない
             console.log(`succeed adding tx ${tx.hash}`);

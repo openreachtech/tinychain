@@ -63,8 +63,7 @@ program
   .command("contract-call")
   .description("call contract function")
   .argument("<data>", "the calldata of transaction")
-  .requiredOption("-w, --wallet <string>", "the location of private key")
-  .requiredOption("-c, --contract <number>", "the contract address")
+  .requiredOption("-c, --contract <string>", "the contract address")
   .option("-p, --port <number>", "the port json endpoint", 3001)
   .action(async (subCmd, options) => {
     const tx = new Transaction("", options.contract, 0, subCmd);

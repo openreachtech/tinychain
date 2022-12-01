@@ -22,7 +22,7 @@ async function main() {
     Get
    ----------------------------- */
   const sigHash = new Interface(["function greet()"]).getSighash("greet");
-  console.log(`get calldata: ${sigHash}\n`);
+  console.log(`greet calldata: ${sigHash}\n`);
 
   /* -----------------------------
     Set
@@ -31,7 +31,7 @@ async function main() {
     types: ["string"],
     values: [SECOND_GREETING],
   });
-  console.log(`set calldata: ${setcalldata}\n`);
+  console.log(`setGreeting calldata: ${setcalldata}\n`);
 
   /* -----------------------------
     Counter

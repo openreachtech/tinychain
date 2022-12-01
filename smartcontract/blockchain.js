@@ -289,10 +289,10 @@ class StateStore {
   async callContract(address, data) {
     const evm = new EVM(this.clone());
     const result = await evm.runCall({
-      to: Address.fromString(address),
+      to: Address.fromString(address.startsWith("0x") ? address : `0x${address}`),
       data: Buffer.from(data, "hex"),
     });
-    return result.execResult.returnValue;
+    return result.execResult.returnValue.toString();
   }
 
   clone() {

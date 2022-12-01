@@ -64,11 +64,11 @@ function startServer(port, blockchain, broadcastTx) {
     broadcastTx(tx); // 受信したトランザクションを他のペアにブロードキャスト
   });
 
-  app.post("/callContract", (req, res) => {
+  app.post("/callContract", async (req, res) => {
     const tx = recoverTx(req.body);
     let result;
     try {
-      result = blockchain.pool.callContract(tx.to, tx.data);
+      result = await blockchain.statestore.callContract(tx.to, tx.data);
     } catch (e) {
       res.send({ msg: `fail. err: ${e.message}` });
       return;
