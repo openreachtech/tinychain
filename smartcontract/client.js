@@ -49,9 +49,9 @@ program
   .description("send contract transaction")
   .argument("<data>", "the calldata of transaction")
   .requiredOption("-w, --wallet <string>", "the location of private key")
-  .requiredOption("-a, --amount <number>", "the amount of coin to send")
-  .requiredOption("-c, --contract <number>", "the contract address")
+  .option("-a, --amount <number>", "the amount of coin to send", 0)
   .option("-p, --port <number>", "the port json endpoint", 3001)
+  .option("-c, --contract <string>", "the contract address", "")
   .action(async (subCmd, options) => {
     const wallet = new Wallet(readWallet(options.wallet));
     const tx = wallet.signTx(new Transaction(wallet.address, options.contract, options.amount, subCmd));

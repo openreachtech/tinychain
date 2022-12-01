@@ -78,9 +78,9 @@ const compileContract = (dir, file) => {
 
 const buildTxObj = (tx) => {
   let txObj = {};
-  if (tx.from) txObj.from = tx.from;
+  txObj.from = tx.from;
+  txObj.amount = tx.amount;
   if (tx.to) txObj.to = tx.to;
-  if (tx.amount) txObj.amount = tx.amount;
   if (tx.data) txObj.data = tx.data.toString("hex");
   if (tx.gasPrice) txObj.gasPrice = tx.gasPrice.toString();
   if (tx.gasLimit) txObj.gasLimit = tx.gasLimit.toString();

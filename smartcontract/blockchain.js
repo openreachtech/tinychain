@@ -353,7 +353,7 @@ class Transaction {
     this.from = StateManager.key(from);
     this.to = to !== "" ? StateManager.key(to) : StateManager.key(ZeroAddress);
     this.amount = amount;
-    this.data = Buffer.from(data, "hex");
+    this.data = Buffer.from(StateManager.key(data), "hex");
     this.gasPrice = BigInt(gasPrice);
     this.gasLimit = BigInt(gasLimit);
     this.signature = sig;

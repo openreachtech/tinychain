@@ -48,14 +48,14 @@ function startServer(port, blockchain, broadcastTx) {
   });
 
   app.get("/balance/:address", (req, res) => {
-    res.send({ balance: blockchain.statestoe.balanceOf(req.params.address) });
+    res.send({ balance: blockchain.statestore.balanceOf(req.params.address) });
   });
 
-  app.post("/sendTransaction", (req, res) => {
+  app.post("/sendTransaction", async (req, res) => {
     const tx = recoverTx(req.body);
     let receipt;
     try {
-      receipt = blockchain.pool.addTx(tx);
+      receipt = await blockchain.pool.addTx(tx);
     } catch (e) {
       res.send({ msg: `fail. err: ${e.message}` });
       return;

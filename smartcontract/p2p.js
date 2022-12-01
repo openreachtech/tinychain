@@ -94,7 +94,7 @@ class P2P {
             if (!self.chain.isProposer()) break;
 
             // 自分がプロポーザの場合は、投票を集計する
-            if (self.chain.votes.length !== self.chain.store.validators().length - 1) break; // 投票率が100%かチェック
+            if (self.chain.votes.length !== self.chain.statestore.validators().length - 1) break; // 投票率が100%かチェック
             if (!self.chain.tallyVotes(self.chain.votes)) {
               // 2/3以上の賛同を得られなければ、ブロックを作り直す
               self.chain.proposeBlock = null;
@@ -108,7 +108,7 @@ class P2P {
             const newBlock = self.wallet.signBlock(
               new Block(b.height, b.preHash, b.timestamp, b.txs, b.proposer, b.stateRoot, self.chain.votes)
             );
-            self.chain.addBlock(newBlock);
+            await self.chain.addBlock(newBlock);
             self.sockets.forEach((s) =>
               s.send(
                 JSON.stringify({
@@ -143,7 +143,7 @@ class P2P {
               packet.votes.map((v) => recoverVote(v)),
               packet.signature
             );
-            const isNew = self.chain.addBlock(b);
+            const isNew = await self.chain.addBlock(b);
             if (!isNew) break; // 新しいブロックでねい場合は、ブロードキャストしない
             console.log(`succeed adding block ${b.hash}`);
             self.sockets.forEach((s) => s.send(data)); // 接続しているPeerにブロードキャスト
@@ -167,8 +167,10 @@ class P2P {
           );
           // プロポーザーなら投票には参加しない
           if (self.chain.isProposer()) break;
+          // 古いブロックならスキップ
+          if (b.height <= self.chain.latestBlock().height) break;
           // 既に同じブロックに投票済みならスキップ
-          if (self.chain.votes.find((v) => v.blockHash === b.hash && v.voter === self.wallet.pubKey)) {
+          if (self.chain.votes.find((v) => v.blockHash === b.hash && v.voter === self.wallet.address)) {
             break;
           }
           // プロポーズされたブロックをブロードキャスト
@@ -186,7 +188,7 @@ class P2P {
           }
 
           // Voteを作ってブロードキャスト
-          const v = self.wallet.signVote(new Vote(b.height, b.hash, self.wallet.pubKey, isYes));
+          const v = self.wallet.signVote(new Vote(b.height, b.hash, self.wallet.address, isYes));
           self.chain.addVote(v); // 自身に追加
           self.sockets.forEach((s) =>
             s.send(
