@@ -106,3 +106,66 @@ class AccountState {
 最後の KV がコントラクトの bytecode です。このハッシュ値が Key となり、`codeHash`に格納されます。
 
 ご覧の通り全ての Key が 32bytes です。これは、EVM のコンピュータモデルが 32bytes のスタックマシーンであることに起因します。
+
+### EVM との I/O
+
+EVM が外部環境へアクセスするときの I/O は[EEIInterface](https://github.com/ethereumjs/ethereumjs-monorepo/blob/%40ethereumjs/evm%401.2.2/packages/evm/src/types.ts#L29)にまとめられています。
+
+```javascript
+export interface EEIInterface extends EVMStateAccess {
+  getBlockHash(num: bigint): Promise<bigint>
+  storageStore(address: Address, key: Buffer, value: Buffer): Promise<void>
+  storageLoad(address: Address, key: Buffer, original: boolean): Promise<Buffer>
+  copy(): EEIInterface
+}
+
+export interface EVMStateAccess extends StateAccess {
+  addWarmedAddress(address: Buffer): void
+  isWarmedAddress(address: Buffer): boolean
+  addWarmedStorage(address: Buffer, slot: Buffer): void
+  isWarmedStorage(address: Buffer, slot: Buffer): boolean
+  clearWarmedAccounts(): void
+  generateAccessList?(addressesRemoved: Address[], addressesOnlyStorage: Address[]): AccessList
+  clearOriginalStorageCache(): void
+  cleanupTouchedAccounts(): Promise<void>
+  generateCanonicalGenesis(initState: any): Promise<void>
+}
+
+interface StateAccess {
+  accountExists(address: Address): Promise<boolean>
+  getAccount(address: Address): Promise<Account>
+  putAccount(address: Address, account: Account): Promise<void>
+  accountIsEmpty(address: Address): Promise<boolean>
+  deleteAccount(address: Address): Promise<void>
+  modifyAccountFields(address: Address, accountFields: AccountFields): Promise<void>
+  putContractCode(address: Address, value: Buffer): Promise<void>
+  getContractCode(address: Address): Promise<Buffer>
+  getContractStorage(address: Address, key: Buffer): Promise<Buffer>
+  putContractStorage(address: Address, key: Buffer, value: Buffer): Promise<void>
+  clearContractStorage(address: Address): Promise<void>
+  checkpoint(): Promise<void>
+  commit(): Promise<void>
+  revert(): Promise<void>
+  getStateRoot(): Promise<Buffer>
+  setStateRoot(stateRoot: Buffer): Promise<void>
+  getProof?(address: Address, storageSlots: Buffer[]): Promise<Proof>
+  verifyProof?(proof: Proof): Promise<boolean>
+  hasStateRoot(root: Buffer): Promise<boolean>
+}
+```
+
+Tinychain は、この内の一部を実装しています。Greeter コントラクトは単純なので、全てを実装する必要がありません。複雑なコントラクトを動かしたい場合は、この内の多くを実装する必要が出てくるはずです。
+
+### Tinychain で実装した I/O
+
+Tinychain で EEIInterface を実装したクラスが`StateManager`です。
+実装したメソッドとその役割をピックアップして解説します。
+
+- `getAccount`: EVM が指定する[Account](https://github.com/ethereumjs/ethereumjs-monorepo/blob/%40ethereumjs/evm%401.2.2/packages/util/src/account.ts#L32)型のアカウントを返却する
+- `putAccount`: Account 型のデータを格納する
+- `isWarmedStorage`: ストレージが初期化されているかチェックする。Key-Value ストアに該当の Key が存在するかチェック
+- `addWarmedStorage`: Slot に初期データを挿入する。Key-Value ストアの Key に初期 Value を入れる。Slot については[Layout of State Variables in Storage](https://docs.soliditylang.org/en/v0.8.17/internals/layout_in_storage.html#layout-of-state-variables-in-storage)を参照
+- `storageLoad`: ストレージからデータを読み込出す。Key-Value ストアの Key に対応する Value を取り出す
+- `storageStore`: ストレージにデータを格納する。Key-Value ストアの Key に Value を入れる
+- `getContractCode`: コントラクトの bytecode を読み出す。Key が codeHash で Value が bytecode
+- `putContractCode`: コントラクトの bytecode を格納する

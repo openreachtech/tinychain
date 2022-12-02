@@ -36,12 +36,16 @@ class AccountState {
   }
 }
 
+// EEIInterfaceを実装したクラス
+// https://github.com/ethereumjs/ethereumjs-monorepo/blob/%40ethereumjs/evm%401.2.2/packages/evm/src/types.ts#L29
 class StateManager {
   constructor(statestore) {
     this.statestore = statestore;
     this._modifies = [];
   }
 
+  // EVMが指定するAccount型のアカウントを返却する
+  // https://github.com/ethereumjs/ethereumjs-monorepo/blob/%40ethereumjs/evm%401.2.2/packages/util/src/account.ts#L32
   async getAccount(address) {
     const state = this.statestore.accountState(StateManager.key(address));
     return new Account(
@@ -52,12 +56,7 @@ class StateManager {
     );
   }
 
-  static key(address) {
-    const k = address.toString("hex");
-    if (!k.startsWith("0x")) return k;
-    return k.substring(2, k.length);
-  }
-
+  // Account型のデータを格納する
   async putAccount(address, account) {
     const addressKey = StateManager.key(address);
     const accountState = this.statestore.accountState(addressKey);
@@ -72,43 +71,79 @@ class StateManager {
     this.statestore.setAccountState(addressKey, newAccountState);
   }
 
-  storageKey(address, key) {
-    return SHA256(`${StateManager.key(address)}|${key.toString("hex")}`).toString();
-  }
-
+  // ストレージが初期化されているかチェックする。Key-Valueストアに該当のKeyが存在するかチェック
   isWarmedStorage(address, slot) {
-    // console.log(address.toString("hex"), slot.toString("hex"))
     const storageKey = this.storageKey(address, slot);
     const kv = this.statestore.store.get(storageKey);
     if (!kv) return false;
     return true;
   }
 
+  // Slotに初期データを挿入する。Key-ValueストアのKeyに初期Valueを入れる
   addWarmedStorage(address, slot) {
-    // コントラクトのstorage slotに対応するKVを初期化
     const storageKey = this.storageKey(address, slot);
     this.statestore.store.set(storageKey, emptySlot);
   }
 
+  // アカウントに対応するKVを初期化
   addWarmedAddress(address) {
-    // アカウントに対応するKVを初期化
     this.statestore.store.set(StateManager.key(address), emptySlot);
   }
 
+  async clearContractStorage(address) {
+    this._modifies = [];
+  }
+
+  // ストレージからデータを読み込出す。Key-ValueストアのKeyに対応するValueを取り出す
+  async storageLoad(address, key, original = false) {
+    const storageKey = this.storageKey(address, key);
+    const kv = this.statestore.store.kvs.find((kv) => kv.key === storageKey);
+    if (!kv) return Buffer.from(emptySlot, "hex");
+    return Buffer.from(kv.value, "hex");
+  }
+
+  // ストレージにデータを格納する。Key-ValueストアのKeyにValueを入れる
+  async storageStore(address, key, value) {
+    const storageKey = this.storageKey(address, key);
+    this.statestore.store.set(storageKey, value.toString("hex"));
+    this._modifies.push(storageKey);
+    await this._modifyContractStorage(address);
+  }
+
+  // コントラクトのbytecodeを読み出す。KeyがcodeHashでValueがbytecode
+  async getContractCode(address) {
+    const addressKey = StateManager.key(address);
+    const state = this.statestore.accountState(addressKey);
+    const kv = this.statestore.store.get(state.codeHash);
+    if (!kv) throw new Error(`not code found by ${state.codeHash}`);
+    return Buffer.from(kv.value, "hex");
+  }
+
+  // コントラクトのbytecodeを格納する
+  async putContractCode(address, value) {
+    const addressKey = StateManager.key(address);
+    const codeHash = AccountState.codeHash(value.toString("hex"));
+    const kv = this.statestore.store.get(addressKey);
+    let state;
+    if (kv) {
+      state = this.statestore.decodeAccountState(kv);
+      state.codeHash = codeHash;
+    } else {
+      state = new AccountState(addressKey, 0, 0, 0, emptySlot, codeHash);
+    }
+    // contractアカウントを更新
+    this.statestore.store.set(addressKey, this.statestore.encodeAccountState(state));
+    // コントラクト自体をKVストアに格納
+    this.statestore.store.set(codeHash, value.toString("hex"));
+  }
+
+  // 呼び出されるが何もしない
   async checkpoint() {}
   async revert() {}
   async commit() {}
 
-  async clearContractStorage(address) {
-    // console.log(`clear storage of ${StateManager.key(address)}`);
-    this._modifies = [];
-  }
-
   async _modifyContractStorage(address) {
-    // const i = this.statestore.store.kvs.findIndex((kv) => kv.key === StateManager.key(address));
-    // if (i < 0) throw new Error(`no account found while clearing contract storage`)
     const addressKey = StateManager.key(address);
-    // const account = await this.getAccount(address);
     const state = this.statestore.accountState(addressKey);
     const root = state.storageRoot;
     let keys = [];
@@ -130,8 +165,6 @@ class StateManager {
       }, "")
       .slice(0, -1);
 
-    // console.log(serialized);
-
     // storage rootの更新
     const newRoot = SHA256(`${serialized}`).toString();
     const value = keys.reduce((pre, key) => pre + key + "|", "").slice(0, -1);
@@ -142,44 +175,14 @@ class StateManager {
     this.statestore.setAccountState(addressKey, state);
   }
 
-  async storageLoad(address, key, original = false) {
-    const storageKey = this.storageKey(address, key);
-    const kv = this.statestore.store.kvs.find((kv) => kv.key === storageKey);
-    if (!kv) return Buffer.from(emptySlot, "hex");
-    return Buffer.from(kv.value, "hex");
+  storageKey(address, key) {
+    return SHA256(`${StateManager.key(address)}|${key.toString("hex")}`).toString();
   }
 
-  async storageStore(address, key, value) {
-    // console.log(address.toString("hex"), key.toString("hex"), value.toString("hex"));
-    const storageKey = this.storageKey(address, key);
-    this.statestore.store.set(storageKey, value.toString("hex"));
-    this._modifies.push(storageKey);
-    await this._modifyContractStorage(address);
-  }
-
-  async putContractCode(address, value) {
-    const addressKey = StateManager.key(address);
-    const codeHash = AccountState.codeHash(value.toString("hex"));
-    const kv = this.statestore.store.get(addressKey);
-    let state;
-    if (kv) {
-      state = this.statestore.decodeAccountState(kv);
-      state.codeHash = codeHash;
-    } else {
-      state = new AccountState(addressKey, 0, 0, 0, emptySlot, codeHash);
-    }
-    // contractアカウントを更新
-    this.statestore.store.set(addressKey, this.statestore.encodeAccountState(state));
-    // コントラクト自体をKVストアに格納
-    this.statestore.store.set(codeHash, value.toString("hex"));
-  }
-
-  async getContractCode(address) {
-    const addressKey = StateManager.key(address);
-    const state = this.statestore.accountState(addressKey);
-    const kv = this.statestore.store.get(state.codeHash);
-    if (!kv) throw new Error(`not code found by ${state.codeHash}`);
-    return Buffer.from(kv.value, "hex");
+  static key(address) {
+    const k = address.toString("hex");
+    if (!k.startsWith("0x")) return k;
+    return k.substring(2, k.length);
   }
 }
 
