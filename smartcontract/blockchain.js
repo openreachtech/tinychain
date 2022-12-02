@@ -175,6 +175,7 @@ class Block {
   }
 }
 
+// KeyとValueのペア
 class KV {
   constructor(key, value) {
     this.key = key;
@@ -182,9 +183,10 @@ class KV {
   }
 }
 
+// Key-Valueストア
 class KVStore {
   constructor(kvs = []) {
-    this.kvs = kvs;
+    this.kvs = kvs; // KVをインメモリの配列で持つ
   }
 
   print() {

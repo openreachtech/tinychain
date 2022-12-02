@@ -7,6 +7,7 @@ contract Greeter {
 
     constructor(string memory _greeting) {
         greeting = _greeting;
+        counter = 1;
     }
 
     function setGreeting(string memory _greeting) public {
