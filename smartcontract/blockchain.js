@@ -175,6 +175,94 @@ class Block {
   }
 }
 
+class Transaction {
+  constructor(from, to, amount, data = "", gasPrice = 1, gasLimit = 16777215, sig = "") {
+    this.from = StateManager.key(from);
+    this.to = to !== "" ? StateManager.key(to) : StateManager.key(ZeroAddress);
+    this.amount = amount;
+    this.data = Buffer.from(StateManager.key(data), "hex");
+    this.gasPrice = BigInt(gasPrice);
+    this.gasLimit = BigInt(gasLimit);
+    this.signature = sig;
+    this.hash = Transaction.hash(this.from, this.to, this.amount, this.data, this.gasPrice, this.gasLimit);
+  }
+
+  toString() {
+    let txObj = {};
+    for (const key in this) {
+      if (key === "data") txObj[key] = this[key].toString("hex");
+      else txObj[key] = this[key].toString();
+    }
+    return JSON.stringify(txObj);
+  }
+
+  static hash(from, to, amount, data, gasPrice, gasLimit) {
+    return SHA256(
+      `${from},${to},${amount},${data.toString("hex")},${gasPrice.toString()},${gasLimit.toString()}`
+    ).toString();
+  }
+}
+
+class TxPool {
+  constructor(statestore) {
+    this.txs = [];
+    this.pendingStates = statestore;
+  }
+
+  clear(statestore) {
+    this.txs = [];
+    this.pendingStates = statestore;
+  }
+
+  async addTx(tx) {
+    TxPool.validateTx(tx, this.pendingStates);
+    if (this.txs.find((t) => t.hash === tx.hash)) return false; // 新規のTxではない
+    const receipt = await StateStore.applyTransaction(this.pendingStates, tx);
+    this.txs.push(tx);
+    return receipt;
+  }
+
+  static validateTx(tx, states) {
+    // hash値が正しく計算されているかチェック
+    const expectedHash = Transaction.hash(tx.from, tx.to, tx.amount, tx.data, tx.gasPrice, tx.gasLimit);
+    if (tx.hash !== expectedHash) {
+      throw new Error(`invalid tx hash. expected: ${expectedHash}`);
+    }
+    // 署名が正当かどうかチェック
+    if (!Wallet.validateSig(tx.hash, tx.signature, tx.from)) {
+      throw new Error(`invalid signature`);
+    }
+    // 送金額が残高以下であるかチェック
+    const balance = states.balanceOf(tx.from);
+    if (balance < tx.amount) {
+      throw new Error(`insufficient fund(=${balance})`);
+    }
+  }
+
+  static serializeTxs(txs) {
+    return txs.reduce((pre, tx) => pre + tx.toString(), "");
+  }
+}
+
+class Vote {
+  constructor(height, blockHash, addr, isYes, sig = "") {
+    this.height = height;
+    this.blockHash = blockHash;
+    this.voter = StateManager.key(addr);
+    this.isYes = isYes;
+    this.signature = sig;
+    this.hash = Vote.hash(this.heigh, this.blockHash, this.voter, this.isYes);
+  }
+
+  toString() {
+    return JSON.stringify(this);
+  }
+
+  static hash(height, blockHash, voter, isYes) {
+    return SHA256(`${height},${blockHash},${voter},${isYes}`).toString();
+  }
+}
+
 // KeyとValueのペア
 class KV {
   constructor(key, value) {
@@ -350,94 +438,7 @@ class StateStore {
   }
 }
 
-class Transaction {
-  constructor(from, to, amount, data = "", gasPrice = 1, gasLimit = 16777215, sig = "") {
-    this.from = StateManager.key(from);
-    this.to = to !== "" ? StateManager.key(to) : StateManager.key(ZeroAddress);
-    this.amount = amount;
-    this.data = Buffer.from(StateManager.key(data), "hex");
-    this.gasPrice = BigInt(gasPrice);
-    this.gasLimit = BigInt(gasLimit);
-    this.signature = sig;
-    this.hash = Transaction.hash(this.from, this.to, this.amount, this.data, this.gasPrice, this.gasLimit);
-  }
-
-  toString() {
-    let txObj = {};
-    for (const key in this) {
-      if (key === "data") txObj[key] = this[key].toString("hex");
-      else txObj[key] = this[key].toString();
-    }
-    return JSON.stringify(txObj);
-  }
-
-  static hash(from, to, amount, data, gasPrice, gasLimit) {
-    return SHA256(
-      `${from},${to},${amount},${data.toString("hex")},${gasPrice.toString()},${gasLimit.toString()}`
-    ).toString();
-  }
-}
-
-class TxPool {
-  constructor(statestore) {
-    this.txs = [];
-    this.pendingStates = statestore;
-  }
-
-  clear(statestore) {
-    this.txs = [];
-    this.pendingStates = statestore;
-  }
-
-  async addTx(tx) {
-    TxPool.validateTx(tx, this.pendingStates);
-    if (this.txs.find((t) => t.hash === tx.hash)) return false; // 新規のTxではない
-    const receipt = await StateStore.applyTransaction(this.pendingStates, tx);
-    this.txs.push(tx);
-    return receipt;
-  }
-
-  static validateTx(tx, states) {
-    // hash値が正しく計算されているかチェック
-    const expectedHash = Transaction.hash(tx.from, tx.to, tx.amount, tx.data, tx.gasPrice, tx.gasLimit);
-    if (tx.hash !== expectedHash) {
-      throw new Error(`invalid tx hash. expected: ${expectedHash}`);
-    }
-    // 署名が正当かどうかチェック
-    if (!Wallet.validateSig(tx.hash, tx.signature, tx.from)) {
-      throw new Error(`invalid signature`);
-    }
-    // 送金額が残高以下であるかチェック
-    const balance = states.balanceOf(tx.from);
-    if (balance < tx.amount) {
-      throw new Error(`insufficient fund(=${balance})`);
-    }
-  }
-
-  static serializeTxs(txs) {
-    return txs.reduce((pre, tx) => pre + tx.toString(), "");
-  }
-}
-
-class Vote {
-  constructor(height, blockHash, addr, isYes, sig = "") {
-    this.height = height;
-    this.blockHash = blockHash;
-    this.voter = StateManager.key(addr);
-    this.isYes = isYes;
-    this.signature = sig;
-    this.hash = Vote.hash(this.heigh, this.blockHash, this.voter, this.isYes);
-  }
-
-  toString() {
-    return JSON.stringify(this);
-  }
-
-  static hash(height, blockHash, voter, isYes) {
-    return SHA256(`${height},${blockHash},${voter},${isYes}`).toString();
-  }
-}
-
+// WalletをBitcoin型からEthereum型に変更
 class Wallet {
   constructor(key) {
     this._wallet = key ? web3.eth.accounts.privateKeyToAccount(key) : web3.eth.accounts.create();

@@ -169,3 +169,17 @@ Tinychain で EEIInterface を実装したクラスが`StateManager`です。
 - `storageStore`: ストレージにデータを格納する。Key-Value ストアの Key に Value を入れる
 - `getContractCode`: コントラクトの bytecode を読み出す。Key が codeHash で Value が bytecode
 - `putContractCode`: コントラクトの bytecode を格納する
+
+## Wallet を Bitcoin 型から Ethereum 型に変更
+
+その他の大きな変更点として、Wallet を Bitcoin 型から Ethereum 型に変更しました。そのまま Bitcoin 型を使い続けることも可能でしたが、EVM と統合する都合上、Ethereum 型に変更するのが自然だったので、リプレイスしました。
+
+```javascript
+class Wallet {
+  constructor(key) {
+    this._wallet = key ? web3.eth.accounts.privateKeyToAccount(key) : web3.eth.accounts.create();
+    this.priKey = this._wallet.privateKey;
+    this.address = this._wallet.address.toLowerCase();
+  }
+  ...
+```
