@@ -183,3 +183,73 @@ class Wallet {
   }
   ...
 ```
+
+## 動作確認
+
+実際に Greeter コントラクトを Deploy して、値を変更することを通じて動作確認します。
+
+- Step1: Step1: Alice, Bob, Tom をバリデータとしてブロックチェーンを起動
+- Step2: Alice が Greeter コントラクトをデプロイ
+- Step3: Greet と Counter の値を取得する
+- Step4: Bob の残高を確認
+
+### Step1: Alice, Bob, Tom をバリデータとしてブロックチェーンを起動
+
+それぞれ、起動します。
+
+```sh
+# alice
+node server.js chain --wallet ./wallet/privkey-alice -p 3001 --p2p-port 5001
+# bob
+node server.js chain --wallet ./wallet/privkey-bob -p 3002 --p2p-port 5002 --p2p-endpoints ws://127.0.0.1:5001
+# tom
+node server.js chain --wallet ./wallet/privkey-tom -p 3003 --p2p-port 5003 --p2p-endpoints ws://127.0.0.1:5001
+```
+
+Alice の残高を確認します。
+
+```sh
+node client.js balance -p 3001 0x9e6aba2bfd33c4919171712e25f52d2fae0edcd0
+```
+
+### Step2: Alice が Greeter コントラクトをデプロイ
+
+まず、コントラクトを deploy するための calldata を作成します。
+動作確認で実行するすべての calldata を[greeter.js](./contract/greeter.js)にまとめてあるので、こちらを実行します。
+
+```sh
+node contract/greeter.js
+```
+
+実行すると、`deploy calldata: 0x6080604052348015....`というバイトコードが生成されます。これが、calldata です。
+この calldata は`contractのbytecode`+`constructorの引数`の構成です。
+
+デプロイのコマンドはこちらです。
+
+```sh
+node client.js contract-send -w ./wallet/privkey-alice 0x6080604052348015...
+```
+
+### Step3: Greet と Counter の値を取得する
+
+コントラクトが正しく Deploy されているか確認するために、Greet と Counter の値を取得してみます。
+
+```sh
+# greet
+node client.js contract-call -c 0x34f353e3437c9352d15a1693180b918f437639e5 0xcfae3217
+
+# counter
+node client.js contract-call -c 0x34f353e3437c9352d15a1693180b918f437639e5 0x61bc221a
+```
+
+### Step4: Greet の内容を変更する
+
+最後に、Deploy したコントラクトの値を変更して、値が変更されているか確認します。
+
+```sh
+# set greet
+node client.js contract-send -w ./wallet/privkey-alice -c 0x34f353e3437c9352d15a1693180b918f437639e5 0xa41368620000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000c486f772061726520796f753f0000000000000000000000000000000000000000
+
+# greet
+node client.js contract-call -c 0x34f353e3437c9352d15a1693180b918f437639e5 0xcfae3217
+```

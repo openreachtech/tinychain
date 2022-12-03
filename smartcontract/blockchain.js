@@ -152,7 +152,7 @@ class Tinychain {
       this.pendingBlock = this.generateBlock();
       broadcastBlock(this.pendingBlock);
       console.log(`proposing ${this.pendingBlock.height} th height of block`);
-    }, 3 * 1000); // x秒間隔で実行する
+    }, 12 * 1000); // x秒間隔で実行する
   }
 }
 
