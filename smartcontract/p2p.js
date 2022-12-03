@@ -237,18 +237,7 @@ const genBroadcastProposeBlockFunc = (p2p) =>
 // 「server用の受信したトランザクションをブロードキャストする関数」を生成する関数
 const genBroadcastTxFunc = (p2p) =>
   function (tx) {
-    p2p.sockets.forEach((s) =>
-      s.send(
-        // JSON.stringify({
-        //   type: PacketTypes.Tx,
-        //   from: tx.from,
-        //   to: tx.to,
-        //   amount: tx.amount,
-        //   signature: tx.signature,
-        // })
-        JSON.stringify(Object.assign({ type: PacketTypes.Tx }, buildTxObj(tx)))
-      )
-    );
+    p2p.sockets.forEach((s) => s.send(JSON.stringify(Object.assign({ type: PacketTypes.Tx }, buildTxObj(tx)))));
   };
 
 const recoverTx = (txObj) => {
